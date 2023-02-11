@@ -24,9 +24,9 @@ UserProfile::UserProfile(uint8_t index) {
   // if non-zero, it prevents the user from playing the game.
   // "You do not have permissions to perform this operation."
   xuid_ = 0xB13EBABEBABEBABE + index;
-  name_ = "User";
+  name_ = "Bigdemon";
   if (index) {
-    name_ = "User_" + std::to_string(index);
+    name_ = "Bigdemon_" + std::to_string(index);
   }
 
   // https://cs.rin.ru/forum/viewtopic.php?f=38&t=60668&hilit=gfwl+live&start=195
