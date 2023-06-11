@@ -52,6 +52,7 @@ KernelState::KernelState(Emulator* emulator)
   file_system_ = emulator->file_system();
 
   app_manager_ = std::make_unique<xam::AppManager>();
+  achievement_manager_ = std::make_unique<AchievementManager>();
   user_profiles_.emplace(0, std::make_unique<xam::UserProfile>(0));
 
   auto content_root = emulator_->content_root();
@@ -65,6 +66,14 @@ KernelState::KernelState(Emulator* emulator)
 
   // Hardcoded maximum of 2048 TLS slots.
   tls_bitmap_.Resize(2048);
+
+  auto hc_loc_heap = memory_->LookupHeap(strange_hardcoded_page_);
+  bool fixed_alloc_worked = hc_loc_heap->AllocFixed(
+      strange_hardcoded_page_, 65536, 0,
+      kMemoryAllocationCommit | kMemoryAllocationReserve,
+      kMemoryProtectRead | kMemoryProtectWrite);
+
+  xenia_assert(fixed_alloc_worked);
 
   xam::AppManager::RegisterApps(this, app_manager_.get());
 }
@@ -845,10 +854,11 @@ void KernelState::CompleteOverlappedDeferredEx(
   XOverlappedSetContext(ptr, XThread::GetCurrentThreadHandle());
   X_HANDLE event_handle = XOverlappedGetEvent(ptr);
   if (event_handle) {
-    auto ev = object_table()->LookupObject<XEvent>(event_handle);
+    auto ev = object_table()->LookupObject<XObject>(event_handle);
+
     assert_not_null(ev);
-    if (ev) {
-      ev->Reset();
+    if (ev && ev->type() == XObject::Type::Event) {
+      ev.get<XEvent>()->Reset();
     }
   }
   auto global_lock = global_critical_region_.Acquire();
@@ -937,6 +947,55 @@ bool KernelState::Save(ByteStream* stream) {
 
   *num_objects_ptr = static_cast<uint32_t>(num_objects);
   return true;
+}
+
+// this only gets triggered once per ms at most, so fields other than tick count
+// will probably not be updated in a timely manner for guest code that uses them
+void KernelState::UpdateKeTimestampBundle() {
+  X_TIME_STAMP_BUNDLE* lpKeTimeStampBundle =
+      memory_->TranslateVirtual<X_TIME_STAMP_BUNDLE*>(ke_timestamp_bundle_ptr_);
+  uint32_t uptime_ms = Clock::QueryGuestUptimeMillis();
+  xe::store_and_swap<uint64_t>(&lpKeTimeStampBundle->interrupt_time,
+                               Clock::QueryGuestInterruptTime());
+  xe::store_and_swap<uint64_t>(&lpKeTimeStampBundle->system_time,
+                               Clock::QueryGuestSystemTime());
+  xe::store_and_swap<uint32_t>(&lpKeTimeStampBundle->tick_count, uptime_ms);
+}
+
+uint32_t KernelState::GetKeTimestampBundle() {
+  XE_LIKELY_IF(ke_timestamp_bundle_ptr_) { return ke_timestamp_bundle_ptr_; }
+  else {
+    global_critical_region::PrepareToAcquire();
+    return CreateKeTimestampBundle();
+  }
+}
+
+XE_NOINLINE
+XE_COLD
+uint32_t KernelState::CreateKeTimestampBundle() {
+  auto crit = global_critical_region::Acquire();
+
+  uint32_t pKeTimeStampBundle =
+      memory_->SystemHeapAlloc(sizeof(X_TIME_STAMP_BUNDLE));
+  X_TIME_STAMP_BUNDLE* lpKeTimeStampBundle =
+      memory_->TranslateVirtual<X_TIME_STAMP_BUNDLE*>(pKeTimeStampBundle);
+
+  xe::store_and_swap<uint64_t>(&lpKeTimeStampBundle->interrupt_time,
+                               Clock::QueryGuestInterruptTime());
+
+  xe::store_and_swap<uint64_t>(&lpKeTimeStampBundle->system_time,
+                               Clock::QueryGuestSystemTime());
+
+  xe::store_and_swap<uint32_t>(&lpKeTimeStampBundle->tick_count,
+                               Clock::QueryGuestUptimeMillis());
+
+  xe::store_and_swap<uint32_t>(&lpKeTimeStampBundle->padding, 0);
+
+  timestamp_timer_ = xe::threading::HighResolutionTimer::CreateRepeating(
+      std::chrono::milliseconds(1),
+      [this]() { this->UpdateKeTimestampBundle(); });
+  ke_timestamp_bundle_ptr_ = pKeTimeStampBundle;
+  return pKeTimeStampBundle;
 }
 
 bool KernelState::Restore(ByteStream* stream) {

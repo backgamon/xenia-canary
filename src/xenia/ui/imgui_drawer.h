@@ -13,8 +13,10 @@
 #include <cstddef>
 #include <cstdint>
 #include <memory>
+#include <optional>
 #include <vector>
 
+#include "third_party/imgui/imgui.h"
 #include "xenia/ui/immediate_drawer.h"
 #include "xenia/ui/presenter.h"
 #include "xenia/ui/window.h"
@@ -29,6 +31,7 @@ namespace xe {
 namespace ui {
 
 class ImGuiDialog;
+class ImGuiNotification;
 class Window;
 
 class ImGuiDrawer : public WindowInputListener, public UIDrawer {
@@ -41,6 +44,9 @@ class ImGuiDrawer : public WindowInputListener, public UIDrawer {
   void AddDialog(ImGuiDialog* dialog);
   void RemoveDialog(ImGuiDialog* dialog);
 
+  void AddNotification(ImGuiNotification* notification);
+  void RemoveNotification(ImGuiNotification* notification);
+
   // SetPresenter may be called from the destructor.
   void SetPresenter(Presenter* new_presenter);
   void SetImmediateDrawer(ImmediateDrawer* new_immediate_drawer);
@@ -51,8 +57,15 @@ class ImGuiDrawer : public WindowInputListener, public UIDrawer {
   }
 
   void Draw(UIDrawContext& ui_draw_context) override;
-  
+
   void ClearDialogs();
+
+  ImmediateTexture* GetNotificationIcon(uint8_t user_index) {
+    if (user_index >= notification_icon_textures_.size()) {
+      user_index = 0;
+    }
+    return notification_icon_textures_.at(user_index).get();
+  }
 
  protected:
   void OnKeyDown(KeyEvent& e) override;
@@ -67,7 +80,12 @@ class ImGuiDrawer : public WindowInputListener, public UIDrawer {
 
  private:
   void Initialize();
+  void InitializeFonts();
+  bool LoadCustomFont(ImGuiIO& io, ImFontConfig& font_config, float font_size);
+  bool LoadWindowsFont(ImGuiIO& io, ImFontConfig& font_config, float font_size);
+  bool LoadJapaneseFont(ImGuiIO& io, float font_size);
 
+  void SetupNotificationTextures();
   void SetupFontTexture();
 
   void RenderDrawLists(ImDrawData* data, UIDrawContext& ui_draw_context);
@@ -78,7 +96,7 @@ class ImGuiDrawer : public WindowInputListener, public UIDrawer {
   void SwitchToPhysicalMouseAndUpdateMousePosition(const MouseEvent& e);
 
   bool IsDrawingDialogs() const { return dialog_loop_next_index_ != SIZE_MAX; }
-  void DetachIfLastDialogRemoved();
+  void DetachIfLastWindowRemoved();
 
   std::optional<ImGuiKey> VirtualKeyToImGuiKey(VirtualKey vkey);
 
@@ -89,6 +107,10 @@ class ImGuiDrawer : public WindowInputListener, public UIDrawer {
 
   // All currently-attached dialogs that get drawn.
   std::vector<ImGuiDialog*> dialogs_;
+
+  // All queued notifications. Notification at index 0 is currently presented
+  // one.
+  std::vector<ImGuiNotification*> notifications_;
   // Using an index, not an iterator, because after the erasure, the adjustment
   // must be done for the vector element indices that would be in the iterator
   // range that would be invalidated.
@@ -102,6 +124,7 @@ class ImGuiDrawer : public WindowInputListener, public UIDrawer {
   // detaching the presenter.
   std::unique_ptr<ImmediateTexture> font_texture_;
 
+  std::vector<std::unique_ptr<ImmediateTexture>> notification_icon_textures_;
   // If there's an active pointer, the ImGui mouse is controlled by this touch.
   // If it's TouchEvent::kPointerIDNone, the ImGui mouse is controlled by the
   // mouse.

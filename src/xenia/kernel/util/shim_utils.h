@@ -203,8 +203,21 @@ class ContextParam : public Param {
 
   PPCContext* operator->() const { return ctx_; }
 
+  template <typename T>
+  inline T TranslateVirtual(uint32_t guest_addr) const {
+    return ctx_->TranslateVirtual<T>(guest_addr);
+  }
+
+  template <typename T>
+  inline T TranslateGPR(uint32_t which_gpr) const {
+    return ctx_->TranslateVirtualGPR<T>(ctx_->r[which_gpr]);
+  }
+
+  X_KPCR* GetPCR() const { return TranslateGPR<X_KPCR*>(13); }
+
+  XThread* CurrentXThread() const;
  protected:
-  PPCContext* ctx_;
+  PPCContext* XE_RESTRICT ctx_;
 };
 
 class PointerParam : public ParamBase<uint32_t> {
@@ -382,6 +395,7 @@ using pointer_t = const shim::TypedPointerParam<T>&;
 
 using int_result_t = shim::ResultBase<int32_t>;
 using dword_result_t = shim::ResultBase<uint32_t>;
+using qword_result_t = shim::ResultBase<uint64_t>;
 using pointer_result_t = shim::ResultBase<uint32_t>;
 using X_HRESULT_result_t = shim::ResultBase<X_HRESULT>;
 using ppc_context_t = shim::ContextParam;
@@ -520,10 +534,10 @@ XE_NOALIAS void PrintKernelCall(cpu::Export* export_entry,
   string_buffer.Append(')');
   if (export_entry->tags & xe::cpu::ExportTag::kImportant) {
     xe::logging::AppendLogLine(xe::LogLevel::Info, 'i',
-                               string_buffer.to_string_view());
+                               string_buffer.to_string_view(), LogSrc::Kernel);
   } else {
     xe::logging::AppendLogLine(xe::LogLevel::Debug, 'd',
-                               string_buffer.to_string_view());
+                               string_buffer.to_string_view(), LogSrc::Kernel);
   }
 }
 /*

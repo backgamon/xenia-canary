@@ -7,20 +7,26 @@
  ******************************************************************************
  */
 
+#ifndef XENIA_KERNEL_XBOXKRNL_XBOXKRNL_MEMORY_H_
+#define XENIA_KERNEL_XBOXKRNL_XBOXKRNL_MEMORY_H_
+
 #include "xenia/kernel/util/shim_utils.h"
-#include "xenia/kernel/xthread.h"
+#include "xenia/xbox.h"
+
 namespace xe {
 namespace kernel {
-namespace shim {
 
-thread_local StringBuffer string_buffer_;
 
-StringBuffer* thread_local_string_buffer() { return &string_buffer_; }
+namespace xboxkrnl {
 
-XThread* ContextParam::CurrentXThread() const {
-  return XThread::GetCurrentThread();
-}
+uint32_t xeMmAllocatePhysicalMemoryEx(uint32_t flags, uint32_t region_size,
+                                      uint32_t protect_bits,
+                                      uint32_t min_addr_range,
+                                      uint32_t max_addr_range,
+                                      uint32_t alignment);
 
-}  // namespace shim
+}  // namespace xboxkrnl
 }  // namespace kernel
 }  // namespace xe
+
+#endif  // XENIA_KERNEL_XBOXKRNL_XBOXKRNL_MEMORY_H_

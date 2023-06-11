@@ -60,7 +60,7 @@ DEFINE_bool(fullscreen, false, "Whether to launch the emulator in fullscreen.",
             "Display");
 
 DEFINE_bool(controller_hotkeys, true,
-            "Toggle hotkeys for Xbox and PS controllers.", "General");
+            "Hotkeys for Xbox and PS controllers.", "General");
 
 DEFINE_string(
     postprocess_antialiasing, "",
@@ -1147,8 +1147,8 @@ const std::map<int, EmulatorWindow::ControllerHotKey> controller_hotkey_map = {
          "A + Guide = Toggle Readback Resolve", true)},
     {X_INPUT_GAMEPAD_B | X_INPUT_GAMEPAD_GUIDE,
      EmulatorWindow::ControllerHotKey(
-         EmulatorWindow::ButtonFunctions::CloseWindow,
-         "B + Guide = Close Window")},
+         EmulatorWindow::ButtonFunctions::ToggleLogging,
+         "B + Guide = Toggle between loglevel set in config and the 'Disabled' loglevel.", true, true)},
     {X_INPUT_GAMEPAD_Y | X_INPUT_GAMEPAD_GUIDE,
      EmulatorWindow::ControllerHotKey(
          EmulatorWindow::ButtonFunctions::ToggleFullscreen,
@@ -1190,7 +1190,7 @@ const std::map<int, EmulatorWindow::ControllerHotKey> controller_hotkey_map = {
                                 "Start = Run Selected Title", false, false)},
     {X_INPUT_GAMEPAD_BACK | X_INPUT_GAMEPAD_START,
      EmulatorWindow::ControllerHotKey(
-         EmulatorWindow::ButtonFunctions::CloseWindow,
+         EmulatorWindow::ButtonFunctions::ToggleLogging,
          "Back + Start = Close Window", false, false)},
     {X_INPUT_GAMEPAD_DPAD_DOWN,
      EmulatorWindow::ControllerHotKey(
@@ -1296,16 +1296,17 @@ EmulatorWindow::ControllerHotKey EmulatorWindow::ProcessControllerHotkey(
     case ButtonFunctions::DecTitleSelect:
       selected_title_index--;
       break;
-    case ButtonFunctions::CloseWindow:
-      window_->RequestClose();
+    case ButtonFunctions::ToggleLogging:
+      logging::internal::ToggleLogLevel();
       break;
     case ButtonFunctions::Unknown:
     default:
       break;
   }
 
-  if (button_combination.function == ButtonFunctions::IncTitleSelect ||
-      button_combination.function == ButtonFunctions::DecTitleSelect) {
+  if ((button_combination.function == ButtonFunctions::IncTitleSelect ||
+      button_combination.function == ButtonFunctions::DecTitleSelect) &&
+      recently_launched_titles_.size() > 0) {
     selected_title_index = std::clamp(
         selected_title_index, 0, (int)recently_launched_titles_.size() - 1);
 
@@ -1570,7 +1571,8 @@ void EmulatorWindow::LoadRecentlyLaunchedTitles() {
       std::time_t last_run_time =
           *entry_table->get_as<uint64_t>("last_run_time");
 
-      if (path.empty() || !std::filesystem::exists(path)) {
+      std::error_code ec = {};
+      if (path.empty() || !std::filesystem::exists(path, ec)) {
         continue;
       }
 
