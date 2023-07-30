@@ -26,6 +26,7 @@
 #include "xenia/base/mapped_memory.h"
 #include "xenia/base/platform.h"
 #include "xenia/base/string.h"
+#include "xenia/base/system.h"
 #include "xenia/cpu/backend/code_cache.h"
 #include "xenia/cpu/backend/null_backend.h"
 #include "xenia/cpu/cpu_flags.h"
@@ -109,7 +110,30 @@ Emulator::Emulator(const std::filesystem::path& command_line,
       title_id_(std::nullopt),
       paused_(false),
       restoring_(false),
-      restore_fence_() {}
+      restore_fence_() {
+#if XE_PLATFORM_WIN32 == 1
+  // Show a disclaimer that links to the quickstart
+  // guide the first time they ever open the emulator
+  uint64_t persistent_flags = GetPersistentEmulatorFlags();
+  if (!(persistent_flags & EmulatorFlagDisclaimerAcknowledged)) {
+    if ((MessageBoxW(
+             nullptr,
+             L"DISCLAIMER: Xenia is not for enabling illegal activity, and "
+             "support is unavailable for illegally obtained software.\n\n"
+             "Please respect this policy as no further reminders will be "
+             "given.\n\nThe quickstart guide explains how to use digital or "
+             "physical games from your Xbox 360 console.\n\nWould you like "
+             "to open it?",
+             L"Xenia", MB_YESNO | MB_ICONQUESTION) == IDYES)) {
+      LaunchWebBrowser(
+          "https://github.com/xenia-project/xenia/wiki/"
+          "Quickstart#how-to-rip-games");
+    }
+    SetPersistentEmulatorFlags(persistent_flags |
+                               EmulatorFlagDisclaimerAcknowledged);
+  }
+#endif
+}
 
 Emulator::~Emulator() {
   // Note that we delete things in the reverse order they were initialized.
@@ -280,30 +304,85 @@ X_STATUS Emulator::TerminateTitle() {
   return X_STATUS_SUCCESS;
 }
 
+std::string Emulator::CanonicalizeFileExtension(
+    const std::filesystem::path& path) {
+  return xe::utf8::lower_ascii(xe::path_to_utf8(path.extension()));
+}
+
 const std::unique_ptr<vfs::Device> Emulator::CreateVfsDeviceBasedOnPath(
     const std::filesystem::path& path, const std::string_view mount_path) {
   if (!path.has_extension()) {
     return std::make_unique<vfs::StfsContainerDevice>(mount_path, path);
   }
-  auto extension = xe::utf8::lower_ascii(xe::path_to_utf8(path.extension()));
+  auto extension = CanonicalizeFileExtension(path);
   if (extension == ".xex" || extension == ".elf" || extension == ".exe") {
     auto parent_path = path.parent_path();
     return std::make_unique<vfs::HostPathDevice>(
         mount_path, parent_path, !cvars::allow_game_relative_writes);
-  } else {
-    return std::make_unique<vfs::DiscImageDevice>(mount_path, path);
+  } else if (extension == ".7z" || extension == ".zip" || extension == ".rar" ||
+             extension == ".tar" || extension == ".gz") {
+    xe::ShowSimpleMessageBox(
+        xe::SimpleMessageBoxType::Error,
+        fmt::format("Unsupported format!"
+            "Xenia does not support running software in an archived format."));
   }
+  return std::make_unique<vfs::DiscImageDevice>(mount_path, path);
+}
+
+uint64_t Emulator::GetPersistentEmulatorFlags() {
+#if XE_PLATFORM_WIN32 == 1
+  uint64_t value = 0;
+  DWORD value_size = sizeof(value);
+  HKEY xenia_hkey = nullptr;
+  LSTATUS lstat =
+      RegOpenKeyA(HKEY_CURRENT_USER, "SOFTWARE\\Xenia", &xenia_hkey);
+  if (!xenia_hkey) {
+    // let the Set function create the key and initialize it to 0
+    SetPersistentEmulatorFlags(0ULL);
+    return 0ULL;
+  }
+
+  lstat = RegQueryValueExA(xenia_hkey, "XEFLAGS", 0, NULL,
+                           reinterpret_cast<LPBYTE>(&value), &value_size);
+  RegCloseKey(xenia_hkey);
+  if (lstat) {
+    return 0ULL;
+  }
+  return value;
+#else
+  return EmulatorFlagDisclaimerAcknowledged;
+#endif
+}
+void Emulator::SetPersistentEmulatorFlags(uint64_t new_flags) {
+#if XE_PLATFORM_WIN32 == 1
+  uint64_t value = new_flags;
+  DWORD value_size = sizeof(value);
+  HKEY xenia_hkey = nullptr;
+  LSTATUS lstat =
+      RegOpenKeyA(HKEY_CURRENT_USER, "SOFTWARE\\Xenia", &xenia_hkey);
+  if (!xenia_hkey) {
+    lstat = RegCreateKeyA(HKEY_CURRENT_USER, "SOFTWARE\\Xenia", &xenia_hkey);
+  }
+
+  lstat = RegSetValueExA(xenia_hkey, "XEFLAGS", 0, REG_QWORD,
+                         reinterpret_cast<const BYTE*>(&value), 8);
+  RegFlushKey(xenia_hkey);
+  RegCloseKey(xenia_hkey);
+#endif
 }
 
 X_STATUS Emulator::MountPath(const std::filesystem::path& path,
                              const std::string_view mount_path) {
   auto device = CreateVfsDeviceBasedOnPath(path, mount_path);
   if (!device->Initialize()) {
-    xe::FatalError(fmt::format("Unable to mount {}; file corrupt or not found.", xe::path_to_utf8(path)));
+    xe::FatalError(
+        "Unable to mount the selected file, it is an unsupported format or "
+        "corrupted.");
     return X_STATUS_NO_SUCH_FILE;
   }
   if (!file_system_->RegisterDevice(std::move(device))) {
-    xe::FatalError(fmt::format("Unable to register {} to {}.", xe::path_to_utf8(path), xe::path_to_utf8(mount_path)));
+    xe::FatalError(fmt::format("Unable to register the input file to {}.",
+                               xe::path_to_utf8(mount_path)));
     return X_STATUS_NO_SUCH_FILE;
   }
 
@@ -634,31 +713,34 @@ bool Emulator::ExceptionCallback(Exception* ex) {
          current_thread->thread()->system_id(), current_thread->thread_id()));
   crash_msg.append(fmt::format("Thread Handle: 0x{:08X}\n", current_thread->handle()));
   crash_msg.append(fmt::format("PC: 0x{:08X}\n",
-         guest_function->MapMachineCodeToGuestAddress(ex->pc())));
+                  guest_function->MapMachineCodeToGuestAddress(ex->pc())));
   crash_msg.append("Registers:\n");
   for (int i = 0; i < 32; i++) {
     crash_msg.append(fmt::format(" r{:<3} = {:016X}\n", i, context->r[i]));
   }
   for (int i = 0; i < 32; i++) {
-    crash_msg.append(fmt::format(" f{:<3} = {:016X} = (double){} = (float){}\n", i,
-           *reinterpret_cast<uint64_t*>(&context->f[i]), context->f[i],
-           *(float*)&context->f[i]));
+    crash_msg.append(fmt::format(" f{:<3} = {:016X} = (double){} = (float){}\n",
+                                 i,
+                                 *reinterpret_cast<uint64_t*>(&context->f[i]),
+                                 context->f[i], *(float*)&context->f[i]));
   }
   for (int i = 0; i < 128; i++) {
-    crash_msg.append(fmt::format(" v{:<3} = [0x{:08X}, 0x{:08X}, 0x{:08X}, 0x{:08X}]\n", i,
-           context->v[i].u32[0], context->v[i].u32[1], context->v[i].u32[2],
-           context->v[i].u32[3]));
+    crash_msg.append(
+        fmt::format(" v{:<3} = [0x{:08X}, 0x{:08X}, 0x{:08X}, 0x{:08X}]\n", i,
+                    context->v[i].u32[0], context->v[i].u32[1],
+                    context->v[i].u32[2], context->v[i].u32[3]));
   }
   XELOGE("{}", crash_msg);
   std::string crash_dlg = fmt::format(
-              "The guest has crashed.\n\n"
-              "Xenia has now paused itself.\n\n"
-              "{}", crash_msg);
+      "The guest has crashed.\n\n"
+      "Xenia has now paused itself.\n\n"
+      "{}",
+      crash_msg);
   // Display a dialog telling the user the guest has crashed.
   if (display_window_ && imgui_drawer_) {
-    display_window_->app_context().CallInUIThreadSynchronous([this, &crash_dlg]() {
-      xe::ui::ImGuiDialog::ShowMessageBox(
-          imgui_drawer_, "Uh-oh!", crash_dlg);
+    display_window_->app_context().CallInUIThreadSynchronous([this,
+                                                              &crash_dlg]() {
+      xe::ui::ImGuiDialog::ShowMessageBox(imgui_drawer_, "Uh-oh!", crash_dlg);
     });
   }
 
