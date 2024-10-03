@@ -78,7 +78,6 @@ X_RESULT xeXamDispatchDialog(T* dialog,
                              std::function<X_RESULT(T*)> close_callback,
                              uint32_t overlapped) {
   auto pre = []() {
-    // Broadcast XN_SYS_UI = true
     kernel_state()->BroadcastNotification(kXNotificationIDSystemUI, true);
   };
   auto run = [dialog, close_callback]() -> X_RESULT {
@@ -102,7 +101,6 @@ X_RESULT xeXamDispatchDialog(T* dialog,
   };
   auto post = []() {
     xe::threading::Sleep(std::chrono::milliseconds(100));
-    // Broadcast XN_SYS_UI = false
     kernel_state()->BroadcastNotification(kXNotificationIDSystemUI, false);
   };
   if (!overlapped) {
@@ -121,7 +119,6 @@ X_RESULT xeXamDispatchDialogEx(
     T* dialog, std::function<X_RESULT(T*, uint32_t&, uint32_t&)> close_callback,
     uint32_t overlapped) {
   auto pre = []() {
-    // Broadcast XN_SYS_UI = true
     kernel_state()->BroadcastNotification(kXNotificationIDSystemUI, true);
   };
   auto run = [dialog, close_callback](uint32_t& extended_error,
@@ -146,7 +143,6 @@ X_RESULT xeXamDispatchDialogEx(
   };
   auto post = []() {
     xe::threading::Sleep(std::chrono::milliseconds(100));
-    // Broadcast XN_SYS_UI = false
     kernel_state()->BroadcastNotification(kXNotificationIDSystemUI, false);
   };
   if (!overlapped) {
@@ -165,12 +161,10 @@ X_RESULT xeXamDispatchDialogEx(
 X_RESULT xeXamDispatchHeadless(std::function<X_RESULT()> run_callback,
                                uint32_t overlapped) {
   auto pre = []() {
-    // Broadcast XN_SYS_UI = true
     kernel_state()->BroadcastNotification(kXNotificationIDSystemUI, true);
   };
   auto post = []() {
     xe::threading::Sleep(std::chrono::milliseconds(100));
-    // Broadcast XN_SYS_UI = false
     kernel_state()->BroadcastNotification(kXNotificationIDSystemUI, false);
   };
   if (!overlapped) {
@@ -189,12 +183,10 @@ X_RESULT xeXamDispatchHeadlessEx(
     std::function<X_RESULT(uint32_t&, uint32_t&)> run_callback,
     uint32_t overlapped) {
   auto pre = []() {
-    // Broadcast XN_SYS_UI = true
     kernel_state()->BroadcastNotification(kXNotificationIDSystemUI, true);
   };
   auto post = []() {
     xe::threading::Sleep(std::chrono::milliseconds(100));
-    // Broadcast XN_SYS_UI = false
     kernel_state()->BroadcastNotification(kXNotificationIDSystemUI, false);
   };
   if (!overlapped) {
@@ -214,29 +206,30 @@ X_RESULT xeXamDispatchHeadlessEx(
 template <typename T>
 X_RESULT xeXamDispatchDialogAsync(T* dialog,
                                   std::function<void(T*)> close_callback) {
-  // Broadcast XN_SYS_UI = true
   kernel_state()->BroadcastNotification(kXNotificationIDSystemUI, true);
   ++xam_dialogs_shown_;
 
   // Important to pass captured vars by value here since we return from this
   // without waiting for the dialog to close so the original local vars will be
   // destroyed.
-  // FIXME: Probably not the best idea to call Sleep in UI thread.
   dialog->set_close_callback([dialog, close_callback]() {
     close_callback(dialog);
 
     --xam_dialogs_shown_;
 
-    xe::threading::Sleep(std::chrono::milliseconds(100));
-    // Broadcast XN_SYS_UI = false
-    kernel_state()->BroadcastNotification(kXNotificationIDSystemUI, false);
+    auto run = []() -> void {
+      xe::threading::Sleep(std::chrono::milliseconds(100));
+      kernel_state()->BroadcastNotification(kXNotificationIDSystemUI, false);
+    };
+
+    std::thread thread(run);
+    thread.detach();
   });
 
   return X_ERROR_SUCCESS;
 }
 
 X_RESULT xeXamDispatchHeadlessAsync(std::function<void()> run_callback) {
-  // Broadcast XN_SYS_UI = true
   kernel_state()->BroadcastNotification(kXNotificationIDSystemUI, true);
   ++xam_dialogs_shown_;
 
@@ -246,9 +239,13 @@ X_RESULT xeXamDispatchHeadlessAsync(std::function<void()> run_callback) {
 
     --xam_dialogs_shown_;
 
-    xe::threading::Sleep(std::chrono::milliseconds(100));
-    // Broadcast XN_SYS_UI = false
-    kernel_state()->BroadcastNotification(kXNotificationIDSystemUI, false);
+    auto run = []() -> void {
+      xe::threading::Sleep(std::chrono::milliseconds(100));
+      kernel_state()->BroadcastNotification(kXNotificationIDSystemUI, false);
+    };
+
+    std::thread thread(run);
+    thread.detach();
   });
 
   return X_ERROR_SUCCESS;
@@ -678,7 +675,7 @@ dword_result_t XamShowMarketplaceUI_entry(dword_t user_index, dword_t ui_type,
   // 0 - view all content for the current title
   // 1 - view content specified by offer id
   // content_types:
-  // always -1? check more games
+  // game specific, usually just -1
   if (user_index >= 4) {
     return X_ERROR_INVALID_PARAMETER;
   }
