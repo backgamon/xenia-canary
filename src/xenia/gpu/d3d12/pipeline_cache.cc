@@ -272,7 +272,7 @@ void PipelineCache::InitializeShaderStorage(
   }
   pipeline_storage_file_flush_needed_ = false;
   // 'XEPS'.
-  const uint32_t pipeline_storage_magic = 0x53504558;
+  constexpr uint32_t pipeline_storage_magic = 0x53504558;
   // 'DXRO' or 'DXRT'.
   const uint32_t pipeline_storage_magic_api =
       edram_rov_used ? 0x4F525844 : 0x54525844;
@@ -367,7 +367,7 @@ void PipelineCache::InitializeShaderStorage(
     uint32_t version_swapped;
   } shader_storage_file_header;
   // 'XESH'.
-  const uint32_t shader_storage_magic = 0x48534558;
+  constexpr uint32_t shader_storage_magic = 0x48534558;
   if (fread(&shader_storage_file_header, sizeof(shader_storage_file_header), 1,
             shader_storage_file_) &&
       shader_storage_file_header.magic == shader_storage_magic &&
@@ -1577,7 +1577,7 @@ bool PipelineCache::GetCurrentStateDescription(
 
     // Render targets and blending state. 32 because of 0x1F mask, for safety
     // (all unknown to zero).
-    static const PipelineBlendFactor kBlendFactorMap[32] = {
+    static constexpr PipelineBlendFactor kBlendFactorMap[32] = {
         /*  0 */ PipelineBlendFactor::kZero,
         /*  1 */ PipelineBlendFactor::kOne,
         /*  2 */ PipelineBlendFactor::kZero,  // ?
@@ -1603,7 +1603,7 @@ bool PipelineCache::GetCurrentStateDescription(
     // Like kBlendFactorMap, but with color modes changed to alpha. Some
     // pipelines aren't created in 545407E0 because a color mode is used for
     // alpha.
-    static const PipelineBlendFactor kBlendFactorAlphaMap[32] = {
+    static constexpr PipelineBlendFactor kBlendFactorAlphaMap[32] = {
         /*  0 */ PipelineBlendFactor::kZero,
         /*  1 */ PipelineBlendFactor::kOne,
         /*  2 */ PipelineBlendFactor::kZero,  // ?
@@ -3029,7 +3029,7 @@ ID3D12PipelineState* PipelineCache::CreateD3D12Pipeline(
       break;
   }
   state_desc.RasterizerState.FrontCounterClockwise =
-      description.front_counter_clockwise ? TRUE : FALSE;
+      description.front_counter_clockwise ? true : false;
   state_desc.RasterizerState.DepthBias = description.depth_bias;
   state_desc.RasterizerState.DepthBiasClamp = 0.0f;
   // With non-square resolution scaling, make sure the worst-case impact is
@@ -3041,7 +3041,7 @@ ID3D12PipelineState* PipelineCache::CreateD3D12Pipeline(
       float(std::max(render_target_cache_.draw_resolution_scale_x(),
                      render_target_cache_.draw_resolution_scale_y()));
   state_desc.RasterizerState.DepthClipEnable =
-      description.depth_clip ? TRUE : FALSE;
+      description.depth_clip ? true : false;
   uint32_t msaa_sample_count = uint32_t(1)
                                << uint32_t(description.host_msaa_samples);
   if (edram_rov_used) {
@@ -3082,7 +3082,7 @@ ID3D12PipelineState* PipelineCache::CreateD3D12Pipeline(
     // Depth/stencil.
     if (description.depth_func != xenos::CompareFunction::kAlways ||
         description.depth_write) {
-      state_desc.DepthStencilState.DepthEnable = TRUE;
+      state_desc.DepthStencilState.DepthEnable = true;
       state_desc.DepthStencilState.DepthWriteMask =
           description.depth_write ? D3D12_DEPTH_WRITE_MASK_ALL
                                   : D3D12_DEPTH_WRITE_MASK_ZERO;
@@ -3093,7 +3093,7 @@ ID3D12PipelineState* PipelineCache::CreateD3D12Pipeline(
                                 uint32_t(description.depth_func));
     }
     if (description.stencil_enable) {
-      state_desc.DepthStencilState.StencilEnable = TRUE;
+      state_desc.DepthStencilState.StencilEnable = true;
       state_desc.DepthStencilState.StencilReadMask =
           description.stencil_read_mask;
       state_desc.DepthStencilState.StencilWriteMask =
@@ -3131,8 +3131,8 @@ ID3D12PipelineState* PipelineCache::CreateD3D12Pipeline(
     }
 
     // Render targets and blending.
-    state_desc.BlendState.IndependentBlendEnable = TRUE;
-    static const D3D12_BLEND kBlendFactorMap[] = {
+    state_desc.BlendState.IndependentBlendEnable = true;
+    static constexpr D3D12_BLEND kBlendFactorMap[] = {
         D3D12_BLEND_ZERO,          D3D12_BLEND_ONE,
         D3D12_BLEND_SRC_COLOR,     D3D12_BLEND_INV_SRC_COLOR,
         D3D12_BLEND_SRC_ALPHA,     D3D12_BLEND_INV_SRC_ALPHA,
@@ -3142,7 +3142,7 @@ ID3D12PipelineState* PipelineCache::CreateD3D12Pipeline(
         D3D12_BLEND_SRC_ALPHA_SAT,
     };
     // 8 entries for safety since 3 bits from the guest are passed directly.
-    static const D3D12_BLEND_OP kBlendOpMap[] = {
+    static constexpr D3D12_BLEND_OP kBlendOpMap[] = {
         D3D12_BLEND_OP_ADD, D3D12_BLEND_OP_SUBTRACT,     D3D12_BLEND_OP_MIN,
         D3D12_BLEND_OP_MAX, D3D12_BLEND_OP_REV_SUBTRACT, D3D12_BLEND_OP_ADD,
         D3D12_BLEND_OP_ADD, D3D12_BLEND_OP_ADD};
@@ -3169,14 +3169,22 @@ ID3D12PipelineState* PipelineCache::CreateD3D12Pipeline(
           rt.src_blend_alpha != PipelineBlendFactor::kOne ||
           rt.dest_blend_alpha != PipelineBlendFactor::kZero ||
           rt.blend_op_alpha != xenos::BlendOp::kAdd) {
-        blend_desc.BlendEnable = TRUE;
-        blend_desc.SrcBlend = kBlendFactorMap[uint32_t(rt.src_blend)];
-        blend_desc.DestBlend = kBlendFactorMap[uint32_t(rt.dest_blend)];
+        blend_desc.BlendEnable = true;
         blend_desc.BlendOp = kBlendOpMap[uint32_t(rt.blend_op)];
-        blend_desc.SrcBlendAlpha =
-            kBlendFactorMap[uint32_t(rt.src_blend_alpha)];
-        blend_desc.DestBlendAlpha =
-            kBlendFactorMap[uint32_t(rt.dest_blend_alpha)];
+        if (blend_desc.BlendOp == D3D12_BLEND_OP_MIN ||
+            blend_desc.BlendOp == D3D12_BLEND_OP_MAX) {
+          blend_desc.SrcBlend = D3D12_BLEND_ONE;
+          blend_desc.DestBlend = D3D12_BLEND_ONE;
+          blend_desc.SrcBlendAlpha = D3D12_BLEND_ONE;
+          blend_desc.DestBlendAlpha = D3D12_BLEND_ONE;
+        } else {
+          blend_desc.SrcBlend = kBlendFactorMap[uint32_t(rt.src_blend)];
+          blend_desc.DestBlend = kBlendFactorMap[uint32_t(rt.dest_blend)];
+          blend_desc.SrcBlendAlpha =
+              kBlendFactorMap[uint32_t(rt.src_blend_alpha)];
+          blend_desc.DestBlendAlpha =
+              kBlendFactorMap[uint32_t(rt.dest_blend_alpha)];
+        }
         blend_desc.BlendOpAlpha = kBlendOpMap[uint32_t(rt.blend_op_alpha)];
       }
       blend_desc.RenderTargetWriteMask = rt.write_mask;
@@ -3196,8 +3204,8 @@ ID3D12PipelineState* PipelineCache::CreateD3D12Pipeline(
   if (description.cull_mode == PipelineCullMode::kDisableRasterization) {
     state_desc.PS.pShaderBytecode = nullptr;
     state_desc.PS.BytecodeLength = 0;
-    state_desc.DepthStencilState.DepthEnable = FALSE;
-    state_desc.DepthStencilState.StencilEnable = FALSE;
+    state_desc.DepthStencilState.DepthEnable = false;
+    state_desc.DepthStencilState.StencilEnable = false;
   }
 
   // Create the D3D12 pipeline state object.

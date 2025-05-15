@@ -137,10 +137,10 @@ bool XAudio2AudioDriver::InitializeObjects(Objects& objects) {
   api::XAUDIO2_DEBUG_CONFIGURATION config;
   config.TraceMask = api::XE_XAUDIO2_LOG_ERRORS | api::XE_XAUDIO2_LOG_WARNINGS;
   config.BreakMask = 0;
-  config.LogThreadID = FALSE;
-  config.LogTiming = TRUE;
-  config.LogFunctionName = TRUE;
-  config.LogFileline = TRUE;
+  config.LogThreadID = false;
+  config.LogTiming = true;
+  config.LogFunctionName = true;
+  config.LogFileline = true;
   objects.audio->SetDebugConfiguration(&config);
 
   hr = objects.audio->CreateMasteringVoice(&objects.mastering_voice);
@@ -165,7 +165,7 @@ bool XAudio2AudioDriver::InitializeObjects(Objects& objects) {
 
   waveformat.SubFormat = KSDATAFORMAT_SUBTYPE_IEEE_FLOAT;
   waveformat.Samples.wValidBitsPerSample = waveformat.Format.wBitsPerSample;
-  static const DWORD kChannelMasks[] = {
+  static constexpr DWORD kChannelMasks[] = {
       0,
       0,
       SPEAKER_FRONT_LEFT | SPEAKER_FRONT_RIGHT,

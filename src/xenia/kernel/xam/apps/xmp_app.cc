@@ -31,6 +31,9 @@ X_HRESULT XmpApp::XMPGetStatus(uint32_t state_ptr) {
     xe::threading::Sleep(std::chrono::milliseconds(1));
   }
 
+  if (!state_ptr) {
+    return X_E_INVALIDARG;
+  }
   const uint32_t state = static_cast<uint32_t>(
       kernel_state_->emulator()->audio_media_player()->GetState());
 
@@ -301,7 +304,7 @@ X_HRESULT XmpApp::DispatchMessageSync(uint32_t message, uint32_t buffer_ptr,
       auto info = memory_->TranslateVirtual<XMP_SONGINFO*>(args->info_ptr);
       assert_true(args->xmp_client == 0x00000002);
       assert_zero(args->unk_ptr);
-      XELOGE("XMPGetCurrentSong({:08X}, {:08X})", uint32_t(args->unk_ptr),
+      XELOGD("XMPGetCurrentSong({:08X}, {:08X})", uint32_t(args->unk_ptr),
              uint32_t(args->info_ptr));
 
       Song* current_song =
@@ -439,8 +442,9 @@ X_HRESULT XmpApp::DispatchMessageSync(uint32_t message, uint32_t buffer_ptr,
     case 0x0007002B: {
       // Called on the NXE and Kinect dashboard after clicking on the picture,
       // video, and music library
-      XELOGD("XMPUnk7002B, unimplemented");
-      return X_E_FAIL;
+      XELOGD("XMPUnk7002B({:08X}, {:08X}), unimplemented", buffer_ptr,
+             buffer_length);
+      return X_E_INVALIDARG;
     }
     case 0x0007002E: {
       assert_true(!buffer_length || buffer_length == 12);
@@ -462,8 +466,9 @@ X_HRESULT XmpApp::DispatchMessageSync(uint32_t message, uint32_t buffer_ptr,
     }
     case 0x0007002F: {
       // Called on the start up of all dashboard versions before kinect
-      XELOGD("XMPUnk7002F, unimplemented");
-      return X_E_FAIL;
+      XELOGD("XMPUnk7002F({:08X}, {:08X}), unimplemented", buffer_ptr,
+             buffer_length);
+      return X_E_INVALIDARG;
     }
     case 0x0007003D: {
       // XMPCaptureOutput
@@ -485,16 +490,19 @@ X_HRESULT XmpApp::DispatchMessageSync(uint32_t message, uint32_t buffer_ptr,
     }
     case 0x00070044: {
       // Called on the start up of all dashboard versions before kinect
-      // When it returns X_E_FAIL you can access the music player up to version
-      // 5787
-      XELOGD("XMPUnk70044, unimplemented");
-      return X_E_FAIL;
+      // When it returns X_E_INVALIDARG you can access the music player up to
+      // version 5787
+      XELOGD("XMPUnk70044({:08X}, {:08X}), unimplemented", buffer_ptr,
+             buffer_length);
+      return X_E_INVALIDARG;
     }
     case 0x00070053: {
       // Called on the blades dashboard after clicking on the picture,
-      // video, and music library
-      XELOGD("XMPUnk70053, unimplemented");
-      return X_E_FAIL;
+      // video, and music library in rapid succession then freezes
+      // it only recieves buffer
+      XELOGD("XMPUnk70053({:08X}, {:08X}), unimplemented", buffer_ptr,
+             buffer_length);
+      return X_E_SUCCESS;
     }
   }
   XELOGE(

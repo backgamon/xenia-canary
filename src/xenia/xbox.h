@@ -13,6 +13,7 @@
 #include <map>
 #include <string>
 
+#include "xenia/base/chrono.h"
 #include "xenia/base/memory.h"
 #include "xenia/base/string.h"
 
@@ -66,6 +67,7 @@ typedef uint32_t X_STATUS;
 #define X_STATUS_THREAD_IS_TERMINATING                  ((X_STATUS)0xC000004BL)
 #define X_STATUS_PROCEDURE_NOT_FOUND                    ((X_STATUS)0xC000007AL)
 #define X_STATUS_INVALID_IMAGE_FORMAT                   ((X_STATUS)0xC000007BL)
+#define X_STATUS_DISK_FULL                              ((X_STATUS)0xC000007FL)
 #define X_STATUS_INSUFFICIENT_RESOURCES                 ((X_STATUS)0xC000009AL)
 #define X_STATUS_MEMORY_NOT_ALLOCATED                   ((X_STATUS)0xC00000A0L)
 #define X_STATUS_FILE_IS_A_DIRECTORY                    ((X_STATUS)0xC00000BAL)
@@ -107,6 +109,7 @@ typedef uint32_t X_RESULT;
 #define X_ERROR_DEVICE_NOT_CONNECTED            X_RESULT_FROM_WIN32(0x0000048FL)
 #define X_ERROR_NOT_FOUND                       X_RESULT_FROM_WIN32(0x00000490L)
 #define X_ERROR_CANCELLED                       X_RESULT_FROM_WIN32(0x000004C7L)
+#define X_ERROR_ABORTED                         X_RESULT_FROM_WIN32(0x000004D3L)
 #define X_ERROR_NOT_LOGGED_ON                   X_RESULT_FROM_WIN32(0x000004DDL)
 #define X_ERROR_NO_SUCH_USER                    X_RESULT_FROM_WIN32(0x00000525L)
 #define X_ERROR_FUNCTION_FAILED                 X_RESULT_FROM_WIN32(0x0000065BL)
@@ -195,6 +198,7 @@ struct XAM_OVERLAPPED {
   xe::be<uint32_t> completion_context;  // 0x14
   xe::be<uint32_t> extended_error;      // 0x18
 };
+static_assert_size(XAM_OVERLAPPED, 0x1C);
 
 inline uint32_t XOverlappedGetResult(void* ptr) {
   auto p = reinterpret_cast<uint32_t*>(ptr);
@@ -272,6 +276,13 @@ constexpr uint8_t XUserIndexAny = 0xFF;
 // https://github.com/ThirteenAG/Ultimate-ASI-Loader/blob/master/source/xlive/xliveless.h
 typedef uint32_t XNotificationID;
 enum : XNotificationID {
+  /* XNotification Notes:
+     - Notification Ids are split into three Sections: Area, Version, and
+     Message Id.
+     - Each Area has the potential to hold 65535 unique notifications as it
+     always starts at 1.
+  */
+
   // Notification Areas
   kXNotifySystem = 0x00000001,
   kXNotifyLive = 0x00000002,
@@ -283,28 +294,34 @@ enum : XNotificationID {
   kXNotifyParty = 0x00000080,
   kXNotifyAll = 0x000000EF,
 
-  // XNotification System (35 total)
+  // XNotification System
+  /* System Notes:
+     - for some functions if XamIsNuiUIActive returns false then
+     XNotifyBroadcast(kXNotificationSystemNUIPause, unk data) is called
+     - XNotifyBroadcast(kXNotificationSystemNUIHardwareStatusChanged,
+     device_state)
+  */
   kXNotificationSystemUI = 0x00000009,
   kXNotificationSystemSignInChanged = 0x0000000A,
   kXNotificationSystemStorageDevicesChanged = 0x0000000B,
   kXNotificationSystemProfileSettingChanged = 0x0000000E,
   kXNotificationSystemMuteListChanged = 0x00000011,
   kXNotificationSystemInputDevicesChanged = 0x00000012,
-  kXNotificationSystemInputDeviceConfigChanged = 0x00000013,
-  kXNotificationSystemPlayerTimerNotice = 0x00000015,
-  kXNotificationSystemPXLiveSystemUpdate = 0x00000016,
-  kXNotificationSystemAvatarChanged = 0x00000017,
-  kXNotificationSystemUnknown = 0x00000018,
-  kXNotificationSystemNUIHardwareStatusChanged = 0x00000019,
-  kXNotificationSystemNUIPause = 0x0000001A,
-  kXNotificationSystemNUIUIApproach = 0x0000001B,
-  kXNotificationSystemDeviceRemap = 0x0000001C,
-  kXNotificationSystemNUIBindingChanged = 0x0000001D,
-  kXNotificationSystemAudioLatencyChanged = 0x0000001E,
-  kXNotificationSystemNUIChatBindingChanged = 0x0000001F,
-  kXNotificationSystemInputActivityChanged = 0x00000020,
+  kXNotificationSystemXLiveTitleUpdate = 0x00000015,
+  kXNotificationSystemXLiveSystemUpdate = 0x00000016,
+  kXNotificationSystemInputDeviceConfigChanged = 0x00010013,
+  kXNotificationSystemPlayerTimerNotice = 0x00030015,
+  kXNotificationSystemAvatarChanged = 0x00040017,
+  kXNotificationSystemNUIHardwareStatusChanged = 0x00060019,
+  kXNotificationSystemNUIPause = 0x0006001A,
+  kXNotificationSystemNUIUIApproach = 0x0006001B,
+  kXNotificationSystemDeviceRemap = 0x0006001C,
+  kXNotificationSystemNUIBindingChanged = 0x0006001D,
+  kXNotificationSystemAudioLatencyChanged = 0x0008001E,
+  kXNotificationSystemNUIChatBindingChanged = 0x0008001F,
+  kXNotificationSystemInputActivityChanged = 0x00090020,
 
-  // XNotification Live (20 total)
+  // XNotification Live
   kXNotificationLiveConnectionChanged = 0x02000001,
   kXNotificationLiveInviteAccepted = 0x02000002,
   kXNotificationLiveLinkStateChanged = 0x02000003,
@@ -312,32 +329,37 @@ enum : XNotificationID {
   kXNotificationLiveMembershipPurchased = 0x02000008,
   kXNotificationLiveVoicechatAway = 0x02000009,
   kXNotificationLivePresenceChanged = 0x0200000A,
-  kXNotificationLiveUnknown = 0x02000012,
 
-  // XNotification Friends (9 total)
+  // XNotification Friends
   kXNotificationFriendsPresenceChanged = 0x04000001,
   kXNotificationFriendsFriendAdded = 0x04000002,
   kXNotificationFriendsFriendRemoved = 0x04000003,
-  kXNotificationFriendsUnknown = 0x04000008,
 
-  // XNotification Custom (5 total)
+  // XNotification Custom
   kXNotificationCustomActionPressed = 0x06000003,
-  kXNotificationCustomGamercard = 0x06000004,
+  kXNotificationCustomGamercard = 0x06010004,
 
   // XNotification Dvd ?
-  kXNotificationDvdDriveUnknown = 0x80000003,
+  /* Dvd Drive? Notes:
+     - after XamLoaderGetMediaInfoEx(media_type?, title_id?, unk) is used for
+     some funcs the first param is used with
+     XNotifyBroadcast(kXNotificationDvdDriveTrayStateChanged, media_type?)
+     - after XamLoaderGetMediaInfoEx(media_type?, title_id?, unk) is used for
+     some funcs the third param is used with
+     XNotifyBroadcast(kXNotificationDvdDriveUnknown2, unk)
+  */
+  kXNotificationDvdDriveUnknown1 = 0x80000003,
   kXNotificationDvdDriveUnknownDashContext = 0x8000000C,
   kXNotificationDvdDriveTrayStateChanged = 0x8000000D,
+  kXNotificationDvdDriveUnknown2 = 0x80010014,
 
-  // XNotification XMP (13 total)
+  // XNotification XMP
   kXNotificationXmpStateChanged = 0x0A000001,
   kXNotificationXmpPlaybackBehaviorChanged = 0x0A000002,
   kXNotificationXmpPlaybackControllerChanged = 0x0A000003,
-  kXNotificationXmpUnknown = 0x0A00000C,
 
-  // XNotification Party (6 total)
-  kXNotificationPartyMembersChanged = 0x0E000002,
-  kXNotificationFriendUnknown = 0x0E000005,
+  // XNotification Party
+  kXNotificationPartyMembersChanged = 0x0E040002,
 
   // XNotification Msgr
   kXNotificationMsgrUnknown = 0x0C00000E,
@@ -352,8 +374,8 @@ struct X_VIDEO_MODE {
   be<uint32_t> is_hi_def;
   be<float> refresh_rate;
   be<uint32_t> video_standard;
-  be<uint32_t> unknown_0x8a;
-  be<uint32_t> unknown_0x01;
+  be<uint32_t> pixel_rate;
+  be<uint32_t> widescreen_flag;
   be<uint32_t> reserved[3];
 };
 static_assert_size(X_VIDEO_MODE, 48);
@@ -390,7 +412,7 @@ struct X_IO_STATUS_BLOCK {
 struct X_EX_TITLE_TERMINATE_REGISTRATION {
   xe::be<uint32_t> notification_routine;  // 0x0
   xe::be<uint32_t> priority;              // 0x4
-  X_LIST_ENTRY list_entry;                // 0x8 ??
+  X_LIST_ENTRY list_entry;                // 0x8
 };
 static_assert_size(X_EX_TITLE_TERMINATE_REGISTRATION, 16);
 
@@ -460,6 +482,48 @@ struct X_KSPINLOCK {
   xe::be<uint32_t> prcb_of_owner;
 };
 static_assert_size(X_KSPINLOCK, 4);
+
+struct X_FILETIME {
+  static constexpr uint64_t minimal_valid_time = 125911584000000000;
+  static constexpr uint64_t maximal_valid_time = 157469184000000000;
+
+  xe::be<uint32_t> high_part;
+  xe::be<uint32_t> low_part;
+
+  X_FILETIME() {
+    high_part = 0;
+    low_part = 0;
+  }
+
+  X_FILETIME(uint64_t filetime) {
+    high_part = static_cast<uint32_t>(filetime >> 32);
+    low_part = static_cast<uint32_t>(filetime);
+  }
+
+  X_FILETIME(std::time_t time) {
+    const auto file_time =
+        chrono::WinSystemClock::to_file_time(chrono::WinSystemClock::from_sys(
+            std::chrono::system_clock::from_time_t(time)));
+
+    high_part = static_cast<uint32_t>(file_time >> 32);
+    low_part = static_cast<uint32_t>(file_time);
+  }
+
+  chrono::WinSystemClock::time_point to_time_point() const {
+    const uint64_t filetime =
+        (static_cast<uint64_t>(high_part) << 32) | low_part;
+
+    return chrono::WinSystemClock::from_file_time(filetime);
+  }
+
+  bool is_valid() const {
+    const uint64_t filetime =
+        (static_cast<uint64_t>(high_part) << 32) | low_part;
+
+    return filetime >= minimal_valid_time && filetime <= maximal_valid_time;
+  }
+};
+static_assert_size(X_FILETIME, 0x8);
 #pragma pack(pop)
 
 // Found by dumping the kSectionStringTable sections of various games:
@@ -484,6 +548,7 @@ enum class XLanguage : uint32_t {
 };
 
 enum class XContentType : uint32_t {
+  kInvalid = 0x00000000,
   kSavedGame = 0x00000001,
   kMarketplaceContent = 0x00000002,
   kPublisher = 0x00000003,
@@ -572,9 +637,9 @@ enum X_MARKETPLACE_ENTRYPOINT : uint32_t {
 
 enum class XDeploymentType : uint32_t {
   kOpticalDisc = 0,
-  kHardDrive = 1,  // Like extracted?
-  kGoD = 2,
-  kUnknown = 0xFF,
+  kInstalledToHDD = 1,  // Like extracted?
+  kDownload = 2,
+  kOther = 3,
 };
 
 inline bool IsOfflineXUID(uint64_t xuid) { return ((xuid >> 60) & 0xF) == 0xE; }
@@ -686,6 +751,7 @@ struct MESSAGEBOX_RESULT {
     xe::be<uint16_t> Passcode[4];
   };
 };
+static_assert_size(MESSAGEBOX_RESULT, 0x8);
 
 // clang-format off
 
@@ -714,6 +780,14 @@ struct MESSAGEBOX_RESULT {
 #define DPAD_DOWN_PASSCODE          0x00005811
 #define DPAD_LEFT_PASSCODE          0x00005812
 #define DPAD_RIGHT_PASSCODE         0x00005813
+
+#pragma pack(push, 4)
+struct X_DASH_APP_INFO {
+  uint64_t unk1;
+  uint32_t unk2;
+};
+static_assert_size(X_DASH_APP_INFO, 0xC);
+#pragma pack(pop)
 
 // clang-format on
 

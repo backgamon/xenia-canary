@@ -680,11 +680,11 @@ bool SDLInputDriver::TestSDLVersion() const {
 #if SDL_VERSION_ATLEAST(2, 0, 9)
   // SDL 2.0.9 or newer is required for simple rumble support and player
   // index.
-  const Uint8 min_patchlevel = 9;
+  constexpr Uint8 min_patchlevel = 9;
 #else
   // SDL 2.0.4 or newer is required to read game controller mappings from
   // file.
-  const Uint8 min_patchlevel = 4;
+  constexpr Uint8 min_patchlevel = 4;
 #endif
 
   SDL_version ver = {};
@@ -730,8 +730,9 @@ void SDLInputDriver::UpdateXCapabilities(ControllerState& state) {
   }
 
   auto& c = state.caps;
-  c.type = 0x01;      // XINPUT_DEVTYPE_GAMEPAD
-  c.sub_type = 0x01;  // XINPUT_DEVSUBTYPE_GAMEPAD
+  c.type = 0x01;  // XINPUT_DEVTYPE_GAMEPAD
+  c.sub_type = static_cast<uint8_t>(SDL_JoystickGetType(
+      SDL_GameControllerGetJoystick(state.sdl)));  // XINPUT_DEVSUBTYPE_GAMEPAD
   c.flags = cap_flags;
   c.gamepad.buttons =
       0xF3FF | (cvars::guide_button ? X_INPUT_GAMEPAD_GUIDE : 0x0);

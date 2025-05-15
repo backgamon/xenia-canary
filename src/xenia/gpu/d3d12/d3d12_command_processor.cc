@@ -810,7 +810,7 @@ bool D3D12CommandProcessor::SetupContext() {
   ID3D12Device* device = provider.GetDevice();
   ID3D12CommandQueue* direct_queue = provider.GetDirectQueue();
 
-  fence_completion_event_ = CreateEvent(nullptr, FALSE, FALSE, nullptr);
+  fence_completion_event_ = CreateEvent(nullptr, false, false, nullptr);
   if (fence_completion_event_ == nullptr) {
     XELOGE("Failed to create the fence completion event");
     return false;
@@ -3134,7 +3134,8 @@ void D3D12CommandProcessor::CheckSubmissionFence(uint64_t await_submission) {
               queue_operations_since_submission_fence_, fence_value)) &&
           SUCCEEDED(
               queue_operations_since_submission_fence_->SetEventOnCompletion(
-                  fence_value, nullptr))) {
+                  fence_value, fence_completion_event_))) {
+        WaitForSingleObject(fence_completion_event_, INFINITE);
         queue_operations_done_since_submission_signal_ = false;
       } else {
         XELOGE(
@@ -3150,8 +3151,9 @@ void D3D12CommandProcessor::CheckSubmissionFence(uint64_t await_submission) {
   uint64_t submission_completed_before = submission_completed_;
   submission_completed_ = submission_fence_->GetCompletedValue();
   if (submission_completed_ < await_submission) {
-    if (SUCCEEDED(submission_fence_->SetEventOnCompletion(await_submission,
-                                                          nullptr))) {
+    if (SUCCEEDED(submission_fence_->SetEventOnCompletion(
+            await_submission, fence_completion_event_))) {
+      WaitForSingleObject(fence_completion_event_, INFINITE);
       submission_completed_ = submission_fence_->GetCompletedValue();
     }
   }

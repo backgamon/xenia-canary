@@ -54,18 +54,18 @@ namespace shaders {
 #include "xenia/gpu/shaders/bytecode/vulkan_spirv/fullscreen_cw_vs.h"
 }  // namespace shaders
 
-const VkDescriptorPoolSize
+constexpr VkDescriptorPoolSize
     VulkanCommandProcessor::kDescriptorPoolSizeUniformBuffer = {
         VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER,
         SpirvShaderTranslator::kConstantBufferCount*
             kLinkedTypeDescriptorPoolSetCount};
 
-const VkDescriptorPoolSize
+constexpr VkDescriptorPoolSize
     VulkanCommandProcessor::kDescriptorPoolSizeStorageBuffer = {
         VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, kLinkedTypeDescriptorPoolSetCount};
 
 // 2x descriptors for texture images because of unsigned and signed bindings.
-const VkDescriptorPoolSize
+constexpr VkDescriptorPoolSize
     VulkanCommandProcessor::kDescriptorPoolSizeTextures[2] = {
         {VK_DESCRIPTOR_TYPE_SAMPLED_IMAGE,
          2 * kLinkedTypeDescriptorPoolSetCount},
@@ -962,7 +962,7 @@ bool VulkanCommandProcessor::SetupContext() {
   swap_apply_gamma_pipeline_color_blend_state.pAttachments =
       &swap_apply_gamma_pipeline_color_blend_attachment_state;
 
-  static const VkDynamicState kSwapApplyGammaPipelineDynamicStates[] = {
+  static constexpr VkDynamicState kSwapApplyGammaPipelineDynamicStates[] = {
       VK_DYNAMIC_STATE_VIEWPORT,
       VK_DYNAMIC_STATE_SCISSOR,
   };

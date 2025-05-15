@@ -244,12 +244,12 @@ class Logger {
   }
 
  private:
-  static const size_t kBufferSize = 8_MiB;
+  static constexpr size_t kBufferSize = 8_MiB;
   uint8_t buffer_[kBufferSize];
 
-  static const size_t kBlockSize = 256;
-  static const size_t kBlockCount = kBufferSize / kBlockSize;
-  static const size_t kBlockIndexMask = kBlockCount - 1;
+  static constexpr size_t kBlockSize = 256;
+  static constexpr size_t kBlockCount = kBufferSize / kBlockSize;
+  static constexpr size_t kBlockIndexMask = kBlockCount - 1;
 
   static const size_t kClaimStrategyFootprint =
       sizeof(std::atomic<dp::sequence_t>[kBlockCount]);
@@ -353,14 +353,14 @@ class Logger {
                     ? line_range.second[line_range.second_length - 1]
                     : line_range.first[line_range.first_length - 1];
             if (last_char != '\n') {
-              const char suffix[1] = {'\n'};
+              constexpr char suffix[1] = {'\n'};
               Write(suffix, 1);
             }
 
             rb.EndRead(std::move(line_range));
           } else {
             // Always ensure there is a newline.
-            const char suffix[1] = {'\n'};
+            constexpr char suffix[1] = {'\n'};
             Write(suffix, 1);
           }
 

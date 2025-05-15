@@ -19,7 +19,7 @@ namespace d3d12 {
 bool D3D12SubmissionTracker::Initialize(ID3D12Device* device,
                                         ID3D12CommandQueue* queue) {
   Shutdown();
-  fence_completion_event_ = CreateEvent(nullptr, FALSE, FALSE, nullptr);
+  fence_completion_event_ = CreateEvent(nullptr, false, false, nullptr);
   if (!fence_completion_event_) {
     XELOGE(
         "D3D12SubmissionTracker: Failed to create the fence completion event");
@@ -75,7 +75,12 @@ bool D3D12SubmissionTracker::AwaitSubmissionCompletion(
     fence_value = submission_signal_queued_;
   }
   if (fence_->GetCompletedValue() < fence_value) {
-    if (FAILED(fence_->SetEventOnCompletion(fence_value, nullptr))) {
+    if (FAILED(fence_->SetEventOnCompletion(fence_value,
+                                            fence_completion_event_))) {
+      return false;
+    }
+    if (WaitForSingleObject(fence_completion_event_, INFINITE) !=
+        WAIT_OBJECT_0) {
       return false;
     }
   }

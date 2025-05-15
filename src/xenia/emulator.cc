@@ -40,10 +40,11 @@
 #include "xenia/hid/input_driver.h"
 #include "xenia/hid/input_system.h"
 #include "xenia/kernel/kernel_state.h"
+#include "xenia/kernel/title_id_utils.h"
 #include "xenia/kernel/user_module.h"
-#include "xenia/kernel/util/xdbf_utils.h"
 #include "xenia/kernel/xam/achievement_manager.h"
 #include "xenia/kernel/xam/xam_module.h"
+#include "xenia/kernel/xam/xdbf/spa_info.h"
 #include "xenia/kernel/xbdm/xbdm_module.h"
 #include "xenia/kernel/xboxkrnl/xboxkrnl_module.h"
 #include "xenia/memory.h"
@@ -215,12 +216,15 @@ X_STATUS Emulator::Setup(
   // logical processors.
   xe::threading::EnableAffinityConfiguration();
 
+  XELOGI("{}: Initializing Memory...", __func__);
   // Create memory system first, as it is required for other systems.
   memory_ = std::make_unique<Memory>();
   if (!memory_->Initialize()) {
-    return false;
+    XELOGE("{}: Cannot initalize memory!", __func__);
+    return result;
   }
 
+  XELOGI("{}: Initializing Exports...", __func__);
   // Shared export resolver used to attach and query for HLE exports.
   export_resolver_ = std::make_unique<xe::cpu::ExportResolver>();
 
@@ -241,30 +245,38 @@ X_STATUS Emulator::Setup(
     backend.reset(new xe::cpu::backend::NullBackend());
   }
 
+  XELOGI("{}: Initializing Processor...", __func__);
   // Initialize the CPU.
   processor_ = std::make_unique<xe::cpu::Processor>(memory_.get(),
                                                     export_resolver_.get());
   if (!processor_->Setup(std::move(backend))) {
+    XELOGE("{}: Cannot initalize processor!", __func__);
     return X_STATUS_UNSUCCESSFUL;
   }
 
+  XELOGI("{}: Initializing Audio...", __func__);
   // Initialize the APU.
   if (audio_system_factory) {
     audio_system_ = audio_system_factory(processor_.get());
     if (!audio_system_) {
+      XELOGE("{}: Cannot initalize audio_system!", __func__);
       return X_STATUS_NOT_IMPLEMENTED;
     }
   }
 
+  XELOGI("{}: Initializing Graphics...", __func__);
   // Initialize the GPU.
   graphics_system_ = graphics_system_factory();
   if (!graphics_system_) {
+    XELOGE("{}: Cannot initalize graphics_system!", __func__);
     return X_STATUS_NOT_IMPLEMENTED;
   }
 
+  XELOGI("{}: Initializing HID...", __func__);
   // Initialize the HID.
   input_system_ = std::make_unique<xe::hid::InputSystem>(display_window_);
   if (!input_system_) {
+    XELOGE("{}: Cannot initalize input_system!", __func__);
     return X_STATUS_NOT_IMPLEMENTED;
   }
   if (input_driver_factory) {
@@ -282,11 +294,13 @@ X_STATUS Emulator::Setup(
     return result;
   }
 
+  XELOGI("{}: Initializing VFS...", __func__);
   // Bring up the virtual filesystem used by the kernel.
   file_system_ = std::make_unique<xe::vfs::VirtualFileSystem>();
 
   patcher_ = std::make_unique<xe::patcher::Patcher>(storage_root_);
 
+  XELOGI("{}: Initializing Kernel...", __func__);
   // Shared kernel state.
   kernel_state_ = std::make_unique<xe::kernel::KernelState>(this);
 #define LOAD_KERNEL_MODULE(t) \
@@ -299,18 +313,22 @@ X_STATUS Emulator::Setup(
   plugin_loader_ = std::make_unique<xe::patcher::PluginLoader>(
       kernel_state_.get(), storage_root() / "plugins");
 
+  XELOGI("{}: Starting graphics_system...", __func__);
   // Setup the core components.
   result = graphics_system_->Setup(
       processor_.get(), kernel_state_.get(),
       display_window_ ? &display_window_->app_context() : nullptr,
       display_window_ != nullptr);
   if (result) {
+    XELOGE("{}: Failed to setup graphics_system!", __func__);
     return result;
   }
 
   if (audio_system_) {
+    XELOGI("{}: Starting audio_system...", __func__);
     result = audio_system_->Setup(kernel_state_.get());
     if (result) {
+      XELOGE("{}: Failed to setup audio_system!", __func__);
       return result;
     }
     audio_media_player_ = std::make_unique<apu::AudioMediaPlayer>(
@@ -444,7 +462,7 @@ Emulator::FileSignatureType Emulator::GetFileSignature(
   }
 
   const uint64_t file_size = std::filesystem::file_size(path);
-  const int64_t header_size = 4;
+  constexpr int64_t header_size = 4;
 
   if (file_size < header_size) {
     return FileSignatureType::Unknown;
@@ -556,8 +574,9 @@ X_STATUS Emulator::LaunchXexFile(const std::filesystem::path& path) {
   X_STATUS result = CompleteLaunch(path, fs_path);
 
   if (XSUCCEEDED(result)) {
-    kernel_state_->deployment_type_ = XDeploymentType::kHardDrive;
-    if (!kernel_state_->is_title_system_type(title_id())) {
+    kernel_state_->deployment_type_ = XDeploymentType::kInstalledToHDD;
+    auto title_id = kernel_state_->title_id();
+    if (!kernel::IsSystemTitle(title_id)) {
       // Assumption that any loaded game is loaded as a disc.
       kernel_state_->deployment_type_ = XDeploymentType::kOpticalDisc;
     }
@@ -594,7 +613,7 @@ X_STATUS Emulator::LaunchStfsContainer(const std::filesystem::path& path) {
   if (result == X_STATUS_NOT_FOUND && !cvars::launch_module.empty()) {
     return LaunchDefaultModule(path);
   }
-  kernel_state_->deployment_type_ = XDeploymentType::kGoD;
+  kernel_state_->deployment_type_ = XDeploymentType::kDownload;
   return result;
 }
 
@@ -604,8 +623,9 @@ X_STATUS Emulator::LaunchDefaultModule(const std::filesystem::path& path) {
   X_STATUS result = CompleteLaunch(path, module_path);
 
   if (XSUCCEEDED(result)) {
-    kernel_state_->deployment_type_ = XDeploymentType::kHardDrive;
-    if (!kernel_state_->is_title_system_type(title_id())) {
+    kernel_state_->deployment_type_ = XDeploymentType::kInstalledToHDD;
+    auto title_id = kernel_state_->title_id();
+    if (!kernel::IsSystemTitle(title_id)) {
       // Assumption that any loaded game is loaded as a disc.
       kernel_state_->deployment_type_ = XDeploymentType::kOpticalDisc;
     }
@@ -768,53 +788,93 @@ X_STATUS Emulator::DataMigration(const uint64_t xuid) {
   return X_STATUS_SUCCESS;
 }
 
-X_STATUS Emulator::InstallContentPackage(
-    const std::filesystem::path& path,
-    ContentInstallationInfo& installation_info) {
-  std::unique_ptr<vfs::Device> device =
-      vfs::XContentContainerDevice::CreateContentDevice("", path);
+X_STATUS Emulator::ProcessContentPackageHeader(
+    const std::filesystem::path& path, ContentInstallEntry& installation_info) {
+  installation_info.name_ = "Invalid Content Package!";
+  installation_info.content_type_ = XContentType::kInvalid;
+  installation_info.data_installation_path_ = xe::path_to_utf8(path.filename());
 
-  installation_info.content_name = "Invalid Content Package!";
-  installation_info.content_type = static_cast<XContentType>(0);
-  installation_info.installation_path = xe::path_to_utf8(path.filename());
+  const auto header = vfs::XContentContainerDevice::ReadContainerHeader(path);
 
-  if (!device || !device->Initialize()) {
+  if (!header || !header->content_header.is_magic_valid()) {
+    installation_info.installation_state_ = InstallState::failed;
+    installation_info.installation_result_ = X_STATUS_INVALID_PARAMETER;
+    installation_info.installation_error_message_ = "Invalid Package Type!";
     XELOGE("Failed to initialize device");
     return X_STATUS_INVALID_PARAMETER;
   }
-
-  const vfs::XContentContainerDevice* dev =
-      (vfs::XContentContainerDevice*)device.get();
 
   // Always install savefiles to user signed to slot 0.
   const auto profile =
       kernel_state_->xam_state()->profile_manager()->GetProfile(
           static_cast<uint8_t>(0));
 
-  uint64_t xuid = dev->xuid();
-  if (dev->content_type() == static_cast<uint32_t>(XContentType::kSavedGame) &&
+  uint64_t xuid = header->content_metadata.profile_id;
+  if (header->content_metadata.content_type == XContentType::kSavedGame &&
       profile) {
     xuid = profile->xuid();
   }
 
-  std::filesystem::path installation_path =
-      content_root() / fmt::format("{:016X}", xuid) /
-      fmt::format("{:08X}", dev->title_id()) /
-      fmt::format("{:08X}", dev->content_type()) / path.filename();
+  installation_info.data_installation_path_ = fmt::format(
+      "{:016X}/{:08X}/{:08X}/{}", xuid,
+      header->content_metadata.execution_info.title_id.get(),
+      static_cast<uint32_t>(header->content_metadata.content_type.get()),
+      path.filename());
 
-  std::filesystem::path header_path =
-      content_root() / fmt::format("{:016X}", xuid) /
-      fmt::format("{:08X}", dev->title_id()) / "Headers" /
-      fmt::format("{:08X}", dev->content_type()) / path.filename();
+  installation_info.header_installation_path_ = fmt::format(
+      "{:016X}/{:08X}/Headers/{:08X}/{}", xuid,
+      header->content_metadata.execution_info.title_id.get(),
+      static_cast<uint32_t>(header->content_metadata.content_type.get()),
+      path.filename());
 
-  installation_info.installation_path =
-      fmt::format("{:016X}/{:08X}/{:08X}/{}", xuid, dev->title_id(),
-                  dev->content_type(), path.filename());
+  installation_info.name_ =
+      xe::to_utf8(header->content_metadata.display_name(XLanguage::kEnglish));
+  installation_info.content_type_ =
+      static_cast<XContentType>(header->content_metadata.content_type);
+  installation_info.content_size_ = header->content_metadata.content_size;
+  installation_info.installation_state_ = InstallState::pending;
 
-  installation_info.content_name =
-      xe::to_utf8(dev->content_header().display_name());
-  installation_info.content_type =
-      static_cast<XContentType>(dev->content_type());
+  installation_info.icon_ = imgui_drawer_->LoadImGuiIcon(
+      std::span<const uint8_t>(header->content_metadata.title_thumbnail,
+                               header->content_metadata.title_thumbnail_size));
+  return X_STATUS_SUCCESS;
+}
+
+X_STATUS Emulator::InstallContentPackage(
+    const std::filesystem::path& path, ContentInstallEntry& installation_info) {
+  installation_info.installation_state_ = InstallState::preparing;
+
+  std::unique_ptr<vfs::XContentContainerDevice> device =
+      vfs::XContentContainerDevice::CreateContentDevice("", path);
+
+  if (!device || !device->Initialize()) {
+    XELOGE("Failed to initialize device");
+    return X_STATUS_INVALID_PARAMETER;
+  }
+
+  const std::filesystem::path installation_path =
+      content_root() / installation_info.data_installation_path_;
+
+  const std::filesystem::path header_path =
+      content_root() / installation_info.header_installation_path_;
+
+  if (!std::filesystem::exists(content_root())) {
+    const std::error_code ec = xe::filesystem::CreateFolder(content_root());
+    if (ec) {
+      installation_info.installation_state_ = InstallState::failed;
+      installation_info.installation_error_message_ = ec.message();
+      installation_info.installation_result_ = X_STATUS_ACCESS_DENIED;
+      return X_STATUS_ACCESS_DENIED;
+    }
+  }
+
+  const auto disk_space = std::filesystem::space(content_root());
+  if (disk_space.available < installation_info.content_size_ * 1.1f) {
+    installation_info.installation_state_ = InstallState::failed;
+    installation_info.installation_error_message_ = "Insufficient disk space!";
+    installation_info.installation_result_ = X_STATUS_DISK_FULL;
+    return X_STATUS_DISK_FULL;
+  }
 
   if (std::filesystem::exists(installation_path)) {
     // TODO(Gliniak): Popup
@@ -823,20 +883,34 @@ X_STATUS Emulator::InstallContentPackage(
     std::error_code error_code;
     std::filesystem::create_directories(installation_path, error_code);
     if (error_code) {
-      installation_info.content_name = "Cannot Create Content Directory!";
+      installation_info.installation_state_ = InstallState::failed;
+      installation_info.installation_error_message_ =
+          "Cannot Create Content Directory!";
+      installation_info.installation_result_ = error_code.value();
       return error_code.value();
     }
   }
 
+  installation_info.content_size_ = device->data_size();
+  installation_info.installation_state_ = InstallState::installing;
+
   vfs::VirtualFileSystem::ExtractContentHeader(device.get(), header_path);
 
   X_STATUS error_code = vfs::VirtualFileSystem::ExtractContentFiles(
-      device.get(), installation_path);
+      device.get(), installation_path,
+      installation_info.currently_installed_size_);
   if (error_code != X_ERROR_SUCCESS) {
+    installation_info.installation_state_ = InstallState::failed;
     return error_code;
   }
 
+  installation_info.installation_state_ = InstallState::installed;
+  installation_info.currently_installed_size_ = installation_info.content_size_;
   kernel_state()->BroadcastNotification(kXNotificationLiveContentInstalled, 0);
+
+  if (installation_info.content_type_ == XContentType::kProfile) {
+    kernel_state_->xam_state()->profile_manager()->ReloadProfiles();
+  }
 
   return error_code;
 }
@@ -862,7 +936,9 @@ X_STATUS Emulator::ExtractZarchivePackage(
     }
   }
 
-  return vfs::VirtualFileSystem::ExtractContentFiles(device.get(), extract_dir);
+  uint64_t progress = 0;
+  return vfs::VirtualFileSystem::ExtractContentFiles(device.get(), extract_dir,
+                                                     progress);
 }
 
 X_STATUS Emulator::CreateZarchivePackage(
@@ -1316,19 +1392,9 @@ std::string Emulator::FindLaunchModule() {
 }
 
 static std::string format_version(xex2_version version) {
-  // fmt::format doesn't like bit fields
-  uint32_t major, minor, build, qfe;
-  major = version.major;
-  minor = version.minor;
-  build = version.build;
-  qfe = version.qfe;
-  if (qfe) {
-    return fmt::format("{}.{}.{}.{}", major, minor, build, qfe);
-  }
-  if (build) {
-    return fmt::format("{}.{}.{}", major, minor, build);
-  }
-  return fmt::format("{}.{}", major, minor);
+  // fmt::format doesn't like bit fields we use + to bypass it
+  return fmt::format("{}.{}.{}.{}", +version.major, +version.minor,
+                     +version.build, +version.qfe);
 }
 
 X_STATUS Emulator::CompleteLaunch(const std::filesystem::path& path,
@@ -1427,9 +1493,13 @@ X_STATUS Emulator::CompleteLaunch(const std::filesystem::path& path,
     }
     game_config_load_callback_loop_next_index_ = SIZE_MAX;
 
-    const kernel::util::XdbfGameData db = kernel_state_->module_xdbf(module);
+    const auto db = kernel_state_->module_xdbf(module);
 
-    game_info_database_ = std::make_unique<kernel::util::GameInfoDatabase>(&db);
+    game_info_database_ =
+        std::make_unique<kernel::util::GameInfoDatabase>(db.get());
+    kernel_state_->xam_state()->LoadSpaInfo(db.get());
+
+    kernel_state_->xam_state()->user_tracker()->AddTitleToPlayedList();
 
     if (game_info_database_->IsValid()) {
       title_name_ = game_info_database_->GetTitleName(
@@ -1490,17 +1560,6 @@ X_STATUS Emulator::CompleteLaunch(const std::filesystem::path& path,
       if (!icon_block.empty()) {
         display_window_->SetIcon(icon_block.data(), icon_block.size());
       }
-
-      for (uint8_t slot = 0; slot < XUserMaxUserCount; slot++) {
-        auto user =
-            kernel_state_->xam_state()->profile_manager()->GetProfile(slot);
-
-        if (user) {
-          kernel_state_->xam_state()
-              ->achievement_manager()
-              ->LoadTitleAchievements(user->xuid(), db);
-        }
-      }
     }
   }
 
@@ -1526,7 +1585,8 @@ X_STATUS Emulator::CompleteLaunch(const std::filesystem::path& path,
   if (cvars::allow_plugins) {
     if (plugin_loader_->IsAnyPluginForTitleAvailable(title_id_.value(),
                                                      module->hash().value())) {
-      plugin_loader_->LoadTitlePlugins(title_id_.value());
+      plugin_loader_->LoadTitlePlugins(title_id_.value(),
+                                       module->hash().value());
     }
   }
 

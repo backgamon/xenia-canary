@@ -26,6 +26,7 @@
 #include "xenia/memory.h"
 #include "xenia/patcher/patcher.h"
 #include "xenia/patcher/plugin_loader.h"
+#include "xenia/ui/immediate_drawer.h"
 #include "xenia/vfs/device.h"
 #include "xenia/vfs/virtual_file_system.h"
 #include "xenia/xbox.h"
@@ -55,8 +56,8 @@ class Window;
 namespace xe {
 
 constexpr fourcc_t kEmulatorSaveSignature = make_fourcc("XSAV");
-static const std::string kDefaultGameSymbolicLink = "GAME:";
-static const std::string kDefaultPartitionSymbolicLink = "D:";
+static constexpr std::string_view kDefaultGameSymbolicLink = "GAME:";
+static constexpr std::string_view kDefaultPartitionSymbolicLink = "D:";
 
 // The main type that runs the whole emulator.
 // This is responsible for initializing and managing all the various subsystems.
@@ -171,6 +172,9 @@ class Emulator {
 
   patcher::PluginLoader* plugin_loader() const { return plugin_loader_.get(); }
 
+  kernel::util::GameInfoDatabase* game_info_database() const {
+    return game_info_database_.get();
+  }
   // Initializes the emulator and configures all components.
   // The given window is used for display and the provided functions are used
   // to create subsystems as required.
@@ -231,18 +235,45 @@ class Emulator {
 
   X_STATUS LaunchDefaultModule(const std::filesystem::path& path);
 
-  struct ContentInstallationInfo {
-    XContentType content_type;
-    std::string installation_path;
-    std::string content_name;
+  enum class InstallState : uint8_t {
+    preparing,
+    pending,
+    installing,
+    installed,
+    failed
+  };
+
+  constexpr static std::string_view installStateStringName[5] = {
+      "Preparing", "Pending", "Installing", "Success", "Failed"};
+
+  struct ContentInstallEntry {
+    ContentInstallEntry(std::filesystem::path path) : path_(path) {};
+
+    std::string name_{};
+    std::filesystem::path path_;
+    std::filesystem::path data_installation_path_;
+    std::filesystem::path header_installation_path_;
+
+    uint64_t content_size_ = 0;
+    uint64_t currently_installed_size_ = 0;
+    XContentType content_type_{};
+
+    InstallState installation_state_{};
+    X_STATUS installation_result_{};
+    std::string installation_error_message_{};
+
+    std::unique_ptr<ui::ImmediateTexture> icon_;
   };
 
   // Migrates data from content to content/xuid with respect to common data.
   X_STATUS DataMigration(const uint64_t xuid);
 
+  X_STATUS ProcessContentPackageHeader(const std::filesystem::path& path,
+                                       ContentInstallEntry& installation_info);
+
   // Extract content of package to content specific directory.
   X_STATUS InstallContentPackage(const std::filesystem::path& path,
-                                 ContentInstallationInfo& installation_info);
+                                 ContentInstallEntry& installation_info);
 
   // Extract content of zar package to desired directory.
   X_STATUS ExtractZarchivePackage(const std::filesystem::path& path,

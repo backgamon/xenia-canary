@@ -16,9 +16,12 @@
 namespace xe {
 namespace ui {
 
+std::atomic<uint64_t> ImGuiDialog::next_window_id_ = 0;
+
 ImGuiDialog::ImGuiDialog(ImGuiDrawer* imgui_drawer)
     : imgui_drawer_(imgui_drawer) {
   imgui_drawer_->AddDialog(this);
+  next_window_id_++;
 }
 
 ImGuiDialog::~ImGuiDialog() {
@@ -64,7 +67,7 @@ class MessageBoxDialog final : public ImGuiDialog {
                                ImGuiWindowFlags_AlwaysAutoResize)) {
       char* text = const_cast<char*>(body_.c_str());
       ImGui::InputTextMultiline(
-          "##body", text, body_.size(), ImVec2(600, 0),
+          "##body", text, body_.size() + 1, ImVec2(600, 0),
           ImGuiInputTextFlags_AutoSelectAll | ImGuiInputTextFlags_ReadOnly);
       if (ImGui::Button("OK")) {
         ImGui::CloseCurrentPopup();

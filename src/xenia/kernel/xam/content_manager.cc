@@ -15,7 +15,9 @@
 
 #include "third_party/fmt/include/fmt/format.h"
 #include "xenia/base/filesystem.h"
+#include "xenia/base/logging.h"
 #include "xenia/base/string.h"
+#include "xenia/emulator.h"
 #include "xenia/kernel/kernel_state.h"
 #include "xenia/kernel/xam/user_profile.h"
 #include "xenia/kernel/xfile.h"
@@ -30,6 +32,7 @@ namespace xam {
 
 static const char* kThumbnailFileName = "__thumbnail.png";
 static const char* kGameContentHeaderDirName = "Headers";
+static const char* kSpaFilename = "spa.bin";
 
 static int content_device_id_ = 0;
 
@@ -37,7 +40,9 @@ ContentPackage::ContentPackage(KernelState* kernel_state,
                                const std::string_view root_name,
                                const XCONTENT_AGGREGATE_DATA& data,
                                const std::filesystem::path& package_path)
-    : kernel_state_(kernel_state), root_name_(root_name) {
+    : kernel_state_(kernel_state),
+      root_name_(root_name),
+      license_(cvars::license_mask) {
   device_path_ = fmt::format("\\Device\\Content\\{0}\\", ++content_device_id_);
   content_data_ = data;
 
@@ -57,8 +62,6 @@ ContentPackage::~ContentPackage() {
 
 void ContentPackage::LoadPackageLicenseMask(
     const std::filesystem::path header_path) {
-  license_ = cvars::license_mask;
-
   if (!std::filesystem::exists(header_path)) {
     return;
   }
@@ -241,6 +244,42 @@ std::vector<XCONTENT_AGGREGATE_DATA> ContentManager::ListContent(
   return result;
 }
 
+std::vector<XCONTENT_AGGREGATE_DATA> ContentManager::ListContentODD(
+    const uint32_t device_id, const uint64_t xuid, const uint32_t title_id,
+    const XContentType content_type) const {
+  std::vector<XCONTENT_AGGREGATE_DATA> result;
+
+  auto xuid_str = fmt::format("{:016X}", xuid);
+  auto title_id_str = fmt::format("{:08X}", title_id);
+  auto content_type_str =
+      fmt::format("{:08X}", static_cast<uint32_t>(content_type));
+
+  const std::filesystem::path game_content_path =
+      std::filesystem::path("GAME:") / "content" / xuid_str / title_id_str /
+      content_type_str;
+
+  auto entry = kernel_state_->file_system()->ResolvePath(
+      xe::path_to_utf8(game_content_path));
+
+  if (!entry) {
+    return {};
+  }
+
+  for (const auto& child : entry->children()) {
+    XCONTENT_AGGREGATE_DATA content_data;
+
+    content_data.device_id = device_id;
+    content_data.content_type = content_type;
+    content_data.set_display_name(xe::path_to_utf16(child->name()));
+    content_data.set_file_name(xe::path_to_utf8(child->name()));
+    content_data.title_id = title_id;
+    content_data.xuid = xuid;
+    result.emplace_back(std::move(content_data));
+  }
+
+  return result;
+}
+
 std::unique_ptr<ContentPackage> ContentManager::ResolvePackage(
     const std::string_view root_name, const uint64_t xuid,
     const XCONTENT_AGGREGATE_DATA& data, const uint32_t disc_number) {
@@ -381,6 +420,15 @@ X_RESULT ContentManager::OpenContent(const std::string_view root_name,
 
   content_license = package->GetPackageLicense();
 
+  // Check for SPA file in package. Check it only for DLCs
+  if (data.content_type == XContentType::kMarketplaceContent) {
+    std::string spa_path = fmt::format("{}:\\{}", root_name, kSpaFilename);
+    auto spa_update = kernel_state_->file_system()->ResolvePath(spa_path);
+    if (spa_update) {
+      kernel_state_->UpdateSpaData(spa_update);
+    }
+  }
+
   open_packages_.insert({string_key::create(root_name), package.release()});
 
   return X_ERROR_SUCCESS;
@@ -491,6 +539,28 @@ void ContentManager::CloseOpenedFilesFromContent(
       file->ReleaseHandle();
     }
   }
+}
+
+uint64_t ContentManager::GetContentTotalSpace() const {
+  std::error_code ec;
+  const auto drive_stats = std::filesystem::space(root_path_, ec);
+  if (ec) {
+    XELOGW("{}: {} (:08X)", __func__, ec.message(), ec.value());
+    return 0;
+  }
+
+  return drive_stats.capacity;
+}
+
+uint64_t ContentManager::GetContentFreeSpace() const {
+  std::error_code ec;
+  const auto drive_stats = std::filesystem::space(root_path_, ec);
+  if (ec) {
+    XELOGW("{}: {} (:08X)", __func__, ec.message(), ec.value());
+    return 0;
+  }
+
+  return drive_stats.free;
 }
 
 }  // namespace xam

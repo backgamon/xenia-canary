@@ -2,7 +2,7 @@
  ******************************************************************************
  * Xenia : Xbox 360 Emulator Research Project                                 *
  ******************************************************************************
- * Copyright 2023 Ben Vanik. All rights reserved.                             *
+ * Copyright 2025 Xenia Canary. All rights reserved.                          *
  * Released under the BSD license - see LICENSE in the root for more details. *
  ******************************************************************************
  */
@@ -15,7 +15,8 @@
 namespace xe {
 namespace vfs {
 
-std::unique_ptr<Device> XContentContainerDevice::CreateContentDevice(
+std::unique_ptr<XContentContainerDevice>
+XContentContainerDevice::CreateContentDevice(
     const std::string_view mount_path, const std::filesystem::path& host_path) {
   if (!std::filesystem::exists(host_path)) {
     XELOGE("Path to XContent container does not exist: {}", host_path);
@@ -99,7 +100,7 @@ bool XContentContainerDevice::Initialize() {
 
   SetupContainer();
 
-  if (LoadHostFiles(header_file) != Result::kSuccess) {
+  if (LoadHostFiles() != Result::kSuccess) {
     XELOGE("Error loading XContent host files.");
     return false;
   }
@@ -107,11 +108,32 @@ bool XContentContainerDevice::Initialize() {
   return Read() == Result::kSuccess;
 }
 
-XContentContainerHeader* XContentContainerDevice::ReadContainerHeader(
-    FILE* host_file) {
-  XContentContainerHeader* header = new XContentContainerHeader();
+std::unique_ptr<XContentContainerHeader>
+XContentContainerDevice::ReadContainerHeader(
+    const std::filesystem::path& file_path) {
+  if (!std::filesystem::exists(file_path)) {
+    return {};
+  }
+
+  if (std::filesystem::file_size(file_path) < sizeof(XContentContainerHeader)) {
+    return {};
+  }
+
+  auto header_file = xe::filesystem::OpenFile(file_path, "rb");
+  if (!header_file) {
+    return {};
+  }
+
+  return ReadContainerHeader(header_file);
+}
+
+std::unique_ptr<XContentContainerHeader>
+XContentContainerDevice::ReadContainerHeader(FILE* host_file) {
+  std::unique_ptr<XContentContainerHeader> header =
+      std::make_unique<XContentContainerHeader>();
+
   // Read header & check signature
-  if (fread(header, sizeof(XContentContainerHeader), 1, host_file) != 1) {
+  if (fread(header.get(), sizeof(XContentContainerHeader), 1, host_file) != 1) {
     return nullptr;
   }
   return header;
@@ -128,14 +150,6 @@ Entry* XContentContainerDevice::ResolvePath(const std::string_view path) {
 void XContentContainerDevice::Dump(StringBuffer* string_buffer) {
   auto global_lock = global_critical_region_.Acquire();
   root_entry_->Dump(string_buffer, 0);
-}
-
-void XContentContainerDevice::CloseFiles() {
-  for (auto& file : files_) {
-    fclose(file.second);
-  }
-  files_.clear();
-  files_total_size_ = 0;
 }
 
 kernel::xam::XCONTENT_AGGREGATE_DATA XContentContainerDevice::content_header()
@@ -172,18 +186,17 @@ XContentContainerDevice::Result XContentContainerDevice::ReadHeaderAndVerify(
     return Result::kTooSmall;
   }
 
-  const XContentContainerHeader* header = ReadContainerHeader(header_file);
+  auto header = ReadContainerHeader(header_file);
   if (header == nullptr) {
     return Result::kReadError;
   }
 
-  std::memcpy(header_.get(), header, sizeof(XContentContainerHeader));
-
-  if (!header_->content_header.is_magic_valid()) {
+  if (!header->content_header.is_magic_valid()) {
     // Unexpected format.
     return Result::kFileMismatch;
   }
 
+  header_ = std::move(header);
   return Result::kSuccess;
 }
 

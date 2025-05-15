@@ -22,6 +22,7 @@
 #include "xenia/kernel/user_module.h"
 #include "xenia/kernel/util/shim_utils.h"
 #include "xenia/kernel/xam/xam_module.h"
+#include "xenia/kernel/xam/xdbf/xdbf_io.h"
 #include "xenia/kernel/xboxkrnl/xboxkrnl_memory.h"
 #include "xenia/kernel/xboxkrnl/xboxkrnl_module.h"
 #include "xenia/kernel/xboxkrnl/xboxkrnl_ob.h"
@@ -36,6 +37,9 @@
 #include "third_party/crypto/TinySHA1.hpp"
 
 DEFINE_bool(apply_title_update, true, "Apply title updates.", "Kernel");
+DEFINE_bool(allow_incompatible_title_update, true,
+            "Allow title updates with mismatched signatures to be applied.",
+            "Kernel");
 
 DEFINE_uint32(kernel_build_version, 1888, "Define current kernel version",
               "Kernel");
@@ -65,6 +69,7 @@ KernelState::KernelState(Emulator* emulator)
   processor_ = emulator->processor();
   file_system_ = emulator->file_system();
   xam_state_ = std::make_unique<xam::XamState>(emulator, this);
+  smc_ = std::make_unique<SystemManagementController>();
 
   InitializeKernelGuestGlobals();
   kernel_version_ = KernelVersion(cvars::kernel_build_version);
@@ -122,23 +127,11 @@ uint32_t KernelState::title_id() const {
   return 0;
 }
 
-bool KernelState::is_title_system_type(uint32_t title_id) {
-  if (!title_id) {
-    return true;
-  }
-
-  if ((title_id & 0xFF000000) == 0x58000000u) {
-    return (title_id & 0xFF0000) != 0x410000;  // if 'X' but not 'XA' (XBLA)
-  }
-
-  return (title_id >> 16) == 0xFFFE;
-}
-
-util::XdbfGameData KernelState::title_xdbf() const {
+const std::unique_ptr<xam::SpaInfo> KernelState::title_xdbf() const {
   return module_xdbf(executable_module_);
 }
 
-util::XdbfGameData KernelState::module_xdbf(
+const std::unique_ptr<xam::SpaInfo> KernelState::module_xdbf(
     object_ref<UserModule> exec_module) const {
   assert_not_null(exec_module);
 
@@ -147,11 +140,32 @@ util::XdbfGameData KernelState::module_xdbf(
   if (XSUCCEEDED(exec_module->GetSection(
           fmt::format("{:08X}", exec_module->title_id()).c_str(),
           &resource_data, &resource_size))) {
-    util::XdbfGameData db(memory()->TranslateVirtual(resource_data),
-                          resource_size);
-    return db;
+    return std::make_unique<xam::SpaInfo>(std::span<uint8_t>(
+        memory()->TranslateVirtual(resource_data), resource_size));
   }
-  return util::XdbfGameData(nullptr, resource_size);
+
+  return nullptr;
+}
+
+bool KernelState::UpdateSpaData(vfs::Entry* spa_file_update) {
+  vfs::File* file;
+  if (spa_file_update->Open(vfs::FileAccess::kFileReadData, &file) !=
+      X_STATUS_SUCCESS) {
+    return false;
+  }
+
+  std::vector<uint8_t> data(spa_file_update->size());
+
+  size_t read_bytes = 0;
+  if (file->ReadSync(std::span<uint8_t>(data.data(), spa_file_update->size()),
+                     0, &read_bytes) != X_STATUS_SUCCESS) {
+    return false;
+  }
+
+  xam::SpaInfo new_spa_data(std::span<uint8_t>(data.data(), data.size()));
+  xam_state_->LoadSpaInfo(&new_spa_data);
+  emulator_->game_info_database()->Update(&new_spa_data);
+  return true;
 }
 
 uint32_t KernelState::AllocateTLS() { return uint32_t(tls_bitmap_.Acquire()); }
@@ -558,6 +572,13 @@ X_RESULT KernelState::ApplyTitleUpdate(
   }
 
   if (!IsPatchSignatureProper(title_module, patch_module)) {
+    if (!cvars::allow_incompatible_title_update) {
+      XELOGW(
+          "Skipping incompatible title update for {} due to signature mismatch",
+          title_module->name());
+      return X_STATUS_SUCCESS;
+    }
+
     // First module that is loaded is always main executable. That way we can
     // prevent random message spam in case of loading/unloading.
     if (!GetExecutableModule()) {
@@ -596,25 +617,25 @@ const object_ref<UserModule> KernelState::LoadTitleUpdate(
   X_RESULT open_status = content_manager()->OpenContent(
       "UPDATE", 0, *title_update, content_license, disc_number);
 
-  // Use the corresponding patch for the launch module
-  std::filesystem::path patch_xexp;
-
   std::string mount_path = "";
-  file_system()->FindSymbolicLink("game:", mount_path);
-
-  auto is_relative = std::filesystem::relative(module->path(), mount_path);
-
-  if (is_relative.empty()) {
+  if (!file_system()->FindSymbolicLink("game:", mount_path)) {
     return nullptr;
   }
 
-  patch_xexp =
-      is_relative.replace_extension(is_relative.extension().string() + "p");
+  if (!module->path().starts_with(mount_path)) {
+    return nullptr;
+  }
 
   std::string resolved_path = "";
-  file_system()->FindSymbolicLink("UPDATE:", resolved_path);
-  xe::vfs::Entry* patch_entry = kernel_state()->file_system()->ResolvePath(
-      resolved_path + patch_xexp.generic_string());
+  if (!file_system()->FindSymbolicLink("UPDATE:", resolved_path)) {
+    return nullptr;
+  }
+
+  const std::string relative_path =
+      module->path().substr(mount_path.size() + 1) + 'p';
+
+  xe::vfs::Entry* patch_entry =
+      kernel_state()->file_system()->ResolvePath(resolved_path + relative_path);
 
   if (!patch_entry) {
     return nullptr;
@@ -872,6 +893,9 @@ void KernelState::RegisterNotifyListener(XNotifyListener* listener) {
     // XN_SYS_SIGNINCHANGED x2
     listener->EnqueueNotification(kXNotificationSystemSignInChanged, 1);
     listener->EnqueueNotification(kXNotificationSystemSignInChanged, 1);
+
+    listener->EnqueueNotification(kXNotificationDvdDriveTrayStateChanged,
+                                  X_DVD_DISC_STATE::XBOX_360_GAME_DISC);
   }
 }
 

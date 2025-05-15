@@ -23,15 +23,17 @@
 #include "xenia/base/mutex.h"
 #include "xenia/cpu/backend/backend.h"
 #include "xenia/cpu/export_resolver.h"
+#include "xenia/kernel/smc.h"
 #include "xenia/kernel/util/kernel_fwd.h"
 #include "xenia/kernel/util/native_list.h"
 #include "xenia/kernel/util/object_table.h"
-#include "xenia/kernel/util/xdbf_utils.h"
 #include "xenia/kernel/xam/achievement_manager.h"
 #include "xenia/kernel/xam/app_manager.h"
 #include "xenia/kernel/xam/content_manager.h"
 #include "xenia/kernel/xam/user_profile.h"
 #include "xenia/kernel/xam/xam_state.h"
+#include "xenia/kernel/xam/xdbf/spa_info.h"
+#include "xenia/kernel/xam/xdbf/xdbf_io.h"
 #include "xenia/kernel/xevent.h"
 #include "xenia/memory.h"
 #include "xenia/vfs/virtual_file_system.h"
@@ -183,11 +185,14 @@ class KernelState {
   vfs::VirtualFileSystem* file_system() const { return file_system_; }
 
   uint32_t title_id() const;
-  static bool is_title_system_type(uint32_t title_id);
-  util::XdbfGameData title_xdbf() const;
-  util::XdbfGameData module_xdbf(object_ref<UserModule> exec_module) const;
+  const std::unique_ptr<xam::SpaInfo> title_xdbf() const;
+  const std::unique_ptr<xam::SpaInfo> module_xdbf(
+      object_ref<UserModule> exec_module) const;
+  bool UpdateSpaData(vfs::Entry* spa_file_update);
 
   xam::XamState* xam_state() const { return xam_state_.get(); }
+
+  SystemManagementController* smc() const { return smc_.get(); }
 
   xam::AchievementManager* achievement_manager() const {
     return xam_state()->achievement_manager();
@@ -304,7 +309,7 @@ class KernelState {
   bool Restore(ByteStream* stream);
 
   uint32_t notification_position_ = 2;
-  XDeploymentType deployment_type_ = XDeploymentType::kUnknown;
+  XDeploymentType deployment_type_ = XDeploymentType::kOther;
 
   uint32_t GetKeTimestampBundle();
 
@@ -346,6 +351,7 @@ class KernelState {
   cpu::Processor* processor_;
   vfs::VirtualFileSystem* file_system_;
   std::unique_ptr<xam::XamState> xam_state_;
+  std::unique_ptr<SystemManagementController> smc_;
 
   KernelVersion kernel_version_;
 
@@ -382,6 +388,7 @@ class KernelState {
 
  public:
   uint32_t dash_context_ = 0;
+  X_DASH_APP_INFO dash_app_info_ = {};
   std::unordered_map<XObject::Type, uint32_t>
       host_object_type_enum_to_guest_object_type_ptr_;
   uint32_t GetKernelGuestGlobals() const { return kernel_guest_globals_; }

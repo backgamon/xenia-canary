@@ -12,7 +12,17 @@
 #include "xenia/base/logging.h"
 #include "xenia/base/threading.h"
 #include "xenia/kernel/kernel_state.h"
+#include "xenia/kernel/xam/xam_content_device.h"
 #include "xenia/kernel/xenumerator.h"
+
+/* Notes:
+   - Messages ids that start with 0x00021xxx are UI calls
+   - Messages ids that start with 0x00023xxx are used for the user profile
+   - Messages ids that start with 0x0002Bxxx are used by the Kinect device
+   usually for camera related functions
+   - Messages ids that start with 0x0002Cxxx are used by the XamNuiIdentity
+   functions
+*/
 
 namespace xe {
 namespace kernel {
@@ -74,35 +84,63 @@ X_HRESULT XamApp::DispatchMessageSync(uint32_t message, uint32_t buffer_ptr,
       return X_E_NO_MORE_FILES;
     }
     case 0x00020021: {
-      struct message_data {
-        char unk_00[64];
-        xe::be<uint32_t> unk_40;  // KeGetCurrentProcessType() < 1 ? 1 : 0
-        xe::be<uint32_t> unk_44;  // ? output_ptr ?
-        xe::be<uint32_t> unk_48;  // ? overlapped_ptr ?
-      }* data = reinterpret_cast<message_data*>(buffer);
-      assert_true(buffer_length == sizeof(message_data));
-      auto unk = memory_->TranslateVirtual<xe::be<uint32_t>*>(data->unk_44);
-      *unk = 0;
-      XELOGD("XamApp(0x00020021)('{}', {:08X}, {:08X}, {:08X})", data->unk_00,
-             (uint32_t)data->unk_40, (uint32_t)data->unk_44,
-             (uint32_t)data->unk_48);
+      struct XContentQueryVolumeDeviceType {
+        char root_name[64];
+        xe::be<uint32_t> is_title_process;
+        xe::be<DeviceType> device_type_ptr;
+        xe::be<uint32_t> overlapped_ptr;
+      }* data = reinterpret_cast<XContentQueryVolumeDeviceType*>(buffer);
+      assert_true(buffer_length == sizeof(XContentQueryVolumeDeviceType));
+
+      xe::be<DeviceType>* device_type_ptr =
+          memory_->TranslateVirtual<xe::be<DeviceType>*>(
+              static_cast<uint32_t>(data->device_type_ptr.get()));
+
+      switch (kernel_state_->deployment_type_) {
+        case XDeploymentType::kDownload:
+        case XDeploymentType::kInstalledToHDD: {
+          *device_type_ptr = DeviceType::HDD;
+        } break;
+        case XDeploymentType::kOpticalDisc: {
+          *device_type_ptr = DeviceType::ODD;
+        } break;
+        default: {
+          *device_type_ptr = DeviceType::Invalid;
+        } break;
+      }
+
+      XELOGD("XContentQueryVolumeDeviceType('{}', {:08X}, {:08X}, {:08X})",
+             data->root_name,
+             static_cast<uint32_t>(data->is_title_process.get()),
+             static_cast<uint32_t>(data->device_type_ptr.get()),
+             static_cast<uint32_t>(data->overlapped_ptr.get()));
+
       return X_E_SUCCESS;
     }
     case 0x00021012: {
-      XELOGD("XamApp(0x00021012)");
+      uint32_t enabled = xe::load_and_swap<uint32_t>(buffer);
+      XELOGD("XEnableGuestSignin: {}", enabled ? "true" : "false");
       return X_E_SUCCESS;
     }
     case 0x00022005: {
-      struct message_data {
+      struct XTITLE_GET_DEPLOYMENT_TYPE {
         xe::be<uint32_t> deployment_type_ptr;
         xe::be<uint32_t> overlapped_ptr;
-      }* data = reinterpret_cast<message_data*>(buffer);
-      assert_true(buffer_length == sizeof(message_data));
+      }* data = reinterpret_cast<XTITLE_GET_DEPLOYMENT_TYPE*>(buffer);
+      assert_true(!buffer_length ||
+                  buffer_length == sizeof(XTITLE_GET_DEPLOYMENT_TYPE));
       auto deployment_type =
           memory_->TranslateVirtual<uint32_t*>(data->deployment_type_ptr);
       *deployment_type = static_cast<uint32_t>(kernel_state_->deployment_type_);
       XELOGD("XTitleGetDeploymentType({:08X}, {:08X}",
              data->deployment_type_ptr.get(), data->overlapped_ptr.get());
+      return X_E_SUCCESS;
+    }
+    case 0x0002B003: {
+      // Games used in:
+      // 4D5309C9
+      XELOGD("XamUnk2B003({:08X}, {:08X}), unimplemented", buffer_ptr,
+             buffer_length);
       return X_E_SUCCESS;
     }
   }

@@ -102,7 +102,8 @@ X_STATUS UserModule::LoadFromFile(const std::string_view path) {
     // Read entire file into memory.
     // Ugh.
     size_t bytes_read = 0;
-    result = file->ReadSync(buffer.data(), buffer.size(), 0, &bytes_read);
+    result = file->ReadSync(std::span<uint8_t>(buffer.data(), buffer.size()), 0,
+                            &bytes_read);
     if (XFAILED(result)) {
       return result;
     }
@@ -614,6 +615,12 @@ void UserModule::Dump() {
       case XEX_HEADER_SYSTEM_FLAGS: {
         sb.AppendFormat("  XEX_HEADER_SYSTEM_FLAGS: {:08X}\n",
                         static_cast<uint32_t>(opt_header.value));
+
+        for (const auto& entry : xex2_system_flags_map) {
+          if (opt_header.value & entry.first) {
+            sb.AppendFormat("    {}\n", entry.second);
+          }
+        }
       } break;
       case XEX_HEADER_EXECUTION_INFO: {
         sb.Append("  XEX_HEADER_EXECUTION_INFO:\n");

@@ -52,9 +52,9 @@ struct XDPC {
 };
 
 struct XAPC {
-  static const uint32_t kSize = 40;
-  static const uint32_t kDummyKernelRoutine = 0xF00DFF00;
-  static const uint32_t kDummyRundownRoutine = 0xF00DFF01;
+  static constexpr uint32_t kSize = 40;
+  static constexpr uint32_t kDummyKernelRoutine = 0xF00DFF00;
+  static constexpr uint32_t kDummyRundownRoutine = 0xF00DFF01;
 
   // KAPC is 0x28(40) bytes? (what's passed to ExAllocatePoolWithTag)
   // This is 4b shorter than NT - looks like the reserved dword at +4 is gone.
@@ -107,7 +107,7 @@ struct X_KPRCB {
   xe::be<uint32_t> dpc_lock;           // 0x44
   X_LIST_ENTRY queued_dpcs_list_head;  // 0x48
   xe::be<uint32_t> dpc_active;         // 0x50
-  xe::be<uint32_t> unk_54;             // 0x54
+  X_KSPINLOCK spin_lock;               // 0x54
   xe::be<uint32_t> unk_58;             // 0x58
   // definitely scheduler related
   X_SINGLE_LIST_ENTRY unk_5C;  // 0x5C

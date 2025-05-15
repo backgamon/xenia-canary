@@ -19,7 +19,7 @@ namespace vfs {
 
 using namespace xe::literals;
 
-const size_t kXESectorSize = 2_KiB;
+constexpr size_t kXESectorSize = 2_KiB;
 
 DiscImageDevice::DiscImageDevice(const std::string_view mount_path,
                                  const std::filesystem::path& host_path)
@@ -70,7 +70,7 @@ Entry* DiscImageDevice::ResolvePath(const std::string_view path) {
 
 DiscImageDevice::Error DiscImageDevice::Verify(ParseState* state) {
   // Find sector 32 of the game partition - try at a few points.
-  static const size_t likely_offsets[] = {
+  static constexpr size_t likely_offsets[] = {
       0x00000000, 0x0000FB20, 0x00020600, 0x02080000, 0x0FD90000,
   };
   bool magic_found = false;
@@ -144,6 +144,11 @@ bool DiscImageDevice::ReadEntry(ParseState* state, const uint8_t* buffer,
   // Filename is stored as Windows-1252, convert it to UTF-8.
   auto ansi_name = std::string(name_buffer, name_length);
   auto name = xe::win1252_to_utf8(ansi_name);
+  // Fallback to normal name if for whatever reason conversion from 1252 code
+  // page failed.
+  if (name.empty()) {
+    name = ansi_name;
+  }
 
   auto entry = DiscImageEntry::Create(this, parent, name, mmap_.get());
   entry->attributes_ = attributes | kFileAttributeReadOnly;

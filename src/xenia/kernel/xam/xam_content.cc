@@ -11,6 +11,7 @@
 #include "xenia/base/math.h"
 #include "xenia/base/string_util.h"
 #include "xenia/kernel/kernel_state.h"
+#include "xenia/kernel/smc.h"
 #include "xenia/kernel/user_module.h"
 #include "xenia/kernel/util/shim_utils.h"
 #include "xenia/kernel/xam/xam_content_device.h"
@@ -21,6 +22,7 @@
 #include "xenia/kernel/xenumerator.h"
 #include "xenia/ui/imgui_dialog.h"
 #include "xenia/ui/imgui_drawer.h"
+#include "xenia/vfs/devices/stfs_xbox.h"
 #include "xenia/xbox.h"
 
 DEFINE_int32(
@@ -49,7 +51,7 @@ dword_result_t XamContentGetLicenseMask_entry(lpdword_t mask_ptr,
     // Remark: This cannot be reflected as on console. Xenia can boot games
     // directly and XBLA games can be repacked to ZAR. For these titles we must
     // provide some license. Normally it should fail for OpticalDisc type.
-    if (kernel_state()->deployment_type_ != XDeploymentType::kUnknown) {
+    if (kernel_state()->deployment_type_ != XDeploymentType::kOther) {
       // Each bit in the mask represents a granted license. Available licenses
       // seems to vary from game to game, but most appear to use bit 0 to
       // indicate if the game is purchased or not.
@@ -75,21 +77,56 @@ DECLARE_XAM_EXPORT2(XamContentGetLicenseMask, kContent, kStub, kHighFrequency);
 dword_result_t XamContentResolve_entry(dword_t user_index,
                                        lpvoid_t content_data_ptr,
                                        lpvoid_t buffer_ptr, dword_t buffer_size,
-                                       dword_t unk1, dword_t unk2,
-                                       dword_t unk3) {
+                                       dword_t unk1, lpdword_t root_name_ptr,
+                                       lpvoid_t overlapped_ptr) {
   auto content_data = content_data_ptr.as<XCONTENT_DATA*>();
+  uint64_t xuid = 0;
+  const auto profile =
+      kernel_state()->xam_state()->profile_manager()->GetProfile(
+          static_cast<uint8_t>(user_index));
+  if (profile && content_data->content_type == XContentType::kSavedGame) {
+    xuid = profile->xuid();
+  }
 
+  std::string root_device_path = "";
+
+  if (root_name_ptr) {
+    // Check if root_name is valid.
+    // root_device_path = std::string(root_name_ptr);
+    // Unsupported for now.
+    return X_ERROR_INVALID_PARAMETER;
+  } else {
+    if (content_data->device_id == static_cast<uint32_t>(DummyDeviceId::HDD)) {
+      root_device_path = "\\Device\\Harddisk0\\Partition1\\Content\\";
+    } else if (content_data->device_id ==
+               static_cast<uint32_t>(DummyDeviceId::ODD)) {
+      // Or GAME, but D: usually means DVD drive meanwhile GAME always pinpoints
+      // to game, even if it is running from HDD
+      root_device_path = "D:\\content\\";
+    } else {
+      return X_ERROR_INVALID_PARAMETER;
+    }
+  }
+
+  const std::string relative_path = fmt::format(
+      "{:016X}\\{:08X}\\{:08X}\\{}", xuid, kernel_state()->title_id(),
+      static_cast<uint32_t>(content_data->content_type.get()),
+      content_data->file_name());
+
+  char* buffer =
+      kernel_memory()->TranslateVirtual<char*>(buffer_ptr.guest_address());
+
+  string_util::copy_truncating(buffer, root_device_path + relative_path,
+                               buffer_size);
+
+  // Check if it exists and try to mount that package
   // Result of buffer_ptr is sent to RtlInitAnsiString.
   // buffer_size is usually 260 (max path).
-  // Games expect zero if resolve was successful.
-  assert_always();
-  XELOGW("XamContentResolve unimplemented!");
-  return X_ERROR_NOT_FOUND;
+  return X_ERROR_SUCCESS;
 }
-DECLARE_XAM_EXPORT1(XamContentResolve, kContent, kStub);
+DECLARE_XAM_EXPORT1(XamContentResolve, kContent, kSketchy);
 
 // https://github.com/MrColdbird/gameservice/blob/master/ContentManager.cpp
-// https://github.com/LestaD/SourceEngine2007/blob/master/se2007/engine/xboxsystem.cpp#L499
 dword_result_t XamContentCreateEnumerator_entry(
     dword_t user_index, dword_t device_id, dword_t content_type,
     dword_t content_flags, dword_t items_per_enumerate,
@@ -131,26 +168,25 @@ dword_result_t XamContentCreateEnumerator_entry(
   std::vector<XCONTENT_AGGREGATE_DATA> enumerated_content = {};
 
   if (!device_info || device_info->device_id == DummyDeviceId::HDD) {
+    std::vector<uint64_t> xuids_to_enumerate = {};
     if (xuid) {
+      xuids_to_enumerate.push_back(xuid);
+    }
+
+    if (!xuid || !(content_flags & vfs::XContentFlag::kExcludeCommon)) {
+      xuids_to_enumerate.push_back(0);  // Common content
+    }
+
+    for (const auto& xuid : xuids_to_enumerate) {
       auto user_enumerated_data =
           kernel_state()->content_manager()->ListContent(
               static_cast<uint32_t>(DummyDeviceId::HDD), xuid,
-              kernel_state()->title_id(), XContentType(uint32_t(content_type)));
+              kernel_state()->title_id(),
+              static_cast<XContentType>(content_type.value()));
 
       enumerated_content.insert(enumerated_content.end(),
                                 user_enumerated_data.cbegin(),
                                 user_enumerated_data.cend());
-    }
-
-    if (!(content_flags & 0x00001000)) {
-      auto common_enumerated_data =
-          kernel_state()->content_manager()->ListContent(
-              static_cast<uint32_t>(DummyDeviceId::HDD), 0,
-              kernel_state()->title_id(), XContentType(uint32_t(content_type)));
-
-      enumerated_content.insert(enumerated_content.end(),
-                                common_enumerated_data.cbegin(),
-                                common_enumerated_data.cend());
     }
 
     // Remove duplicates
@@ -160,7 +196,14 @@ dword_result_t XamContentCreateEnumerator_entry(
   }
 
   if (!device_info || device_info->device_id == DummyDeviceId::ODD) {
-    // TODO(gibbed): disc drive content
+    auto disc_enumerated_data =
+        kernel_state()->content_manager()->ListContentODD(
+            static_cast<uint32_t>(DummyDeviceId::ODD), 0,
+            kernel_state()->title_id(), XContentType(uint32_t(content_type)));
+
+    enumerated_content.insert(enumerated_content.end(),
+                              disc_enumerated_data.cbegin(),
+                              disc_enumerated_data.cend());
   }
 
   for (const auto& content_data : enumerated_content) {
@@ -224,39 +267,39 @@ dword_result_t xeXamContentCreate(dword_t user_index, lpstring_t root_name,
     X_RESULT result = X_ERROR_INVALID_PARAMETER;
     kDispositionState disposition = kDispositionState::Unknown;
     switch (flags & 0xF) {
-      case 1:  // CREATE_NEW
-               // Fail if exists.
+      case vfs::XContentFlag::kCreateNew:
+        // Fail if exists.
         if (content_manager->ContentExists(xuid, content_data)) {
           result = X_ERROR_ALREADY_EXISTS;
         } else {
           disposition = kDispositionState::Create;
         }
         break;
-      case 2:  // CREATE_ALWAYS
-               // Overwrite existing, if any.
+      case vfs::XContentFlag::kCreateAlways:
+        // Overwrite existing, if any.
         if (content_manager->ContentExists(xuid, content_data)) {
           content_manager->DeleteContent(xuid, content_data);
         }
         disposition = kDispositionState::Create;
         break;
-      case 3:  // OPEN_EXISTING
-               // Open only if exists.
+      case vfs::XContentFlag::kOpenExisting:
+        // Open only if exists.
         if (!content_manager->ContentExists(xuid, content_data)) {
           result = X_ERROR_PATH_NOT_FOUND;
         } else {
           disposition = kDispositionState::Open;
         }
         break;
-      case 4:  // OPEN_ALWAYS
-               // Create if needed.
+      case vfs::XContentFlag::kOpenAlways:
+        // Create if needed.
         if (!content_manager->ContentExists(xuid, content_data)) {
           disposition = kDispositionState::Create;
         } else {
           disposition = kDispositionState::Open;
         }
         break;
-      case 5:  // TRUNCATE_EXISTING
-               // Fail if doesn't exist, if does exist delete and recreate.
+      case vfs::XContentFlag::kTruncateExisting:
+        // Fail if doesn't exist, if does exist delete and recreate.
         if (!content_manager->ContentExists(xuid, content_data)) {
           result = X_ERROR_PATH_NOT_FOUND;
         } else {
@@ -622,13 +665,29 @@ dword_result_t XamSwapDisc_entry(
 }
 DECLARE_XAM_EXPORT1(XamSwapDisc, kContent, kSketchy);
 
-dword_result_t XamLoaderGetMediaInfoEx_entry(dword_t unk1, dword_t unk2,
-                                             lpdword_t unk3) {
-  *unk3 = 0;
-  return 0;
+dword_result_t XamLoaderGetDvdTrayState_entry() {
+  return static_cast<uint8_t>(kernel_state()->smc()->GetTrayState());
 }
+DECLARE_XAM_EXPORT1(XamLoaderGetDvdTrayState, kNone, kImplemented);
 
-DECLARE_XAM_EXPORT1(XamLoaderGetMediaInfoEx, kContent, kStub);
+void XamLoaderGetMediaInfoEx_entry(lpdword_t media_type, lpdword_t unk2,
+                                   lpdword_t unk3) {
+  if (media_type) {
+    *media_type = X_DVD_DISC_STATE::XBOX_360_GAME_DISC;
+  }
+  if (unk2) {
+    *unk2 = 0;
+  }
+  if (unk3) {
+    *unk3 = 0;
+  }
+}
+DECLARE_XAM_EXPORT1(XamLoaderGetMediaInfoEx, kNone, kStub);
+
+void XamLoaderGetMediaInfo_entry(lpdword_t media_type, lpdword_t unk2) {
+  XamLoaderGetMediaInfoEx_entry(media_type, unk2, 0);
+}
+DECLARE_XAM_EXPORT1(XamLoaderGetMediaInfo, kNone, kStub);
 
 dword_result_t XamContentLaunchImageFromFileInternal_entry(
     lpstring_t image_location, lpstring_t xex_name, dword_t unk) {
@@ -644,8 +703,10 @@ dword_result_t XamContentLaunchImageFromFileInternal_entry(
   const std::filesystem::path host_path =
       kernel_state()->emulator()->content_root() / entry->name();
   if (!std::filesystem::exists(host_path)) {
+    uint64_t progress = 0;
+
     vfs::VirtualFileSystem::ExtractContentFile(
-        entry, kernel_state()->emulator()->content_root(), true);
+        entry, kernel_state()->emulator()->content_root(), progress, true);
   }
 
   auto xam = kernel_state()->GetKernelModule<XamModule>("xam.xex");
@@ -699,8 +760,9 @@ dword_result_t XamContentLaunchImageInternal_entry(lpvoid_t content_data_ptr,
       kernel_state()->emulator()->content_root() / entry->name();
 
   if (!std::filesystem::exists(host_path)) {
+    uint64_t progress = 0;
     kernel_state()->file_system()->ExtractContentFile(
-        entry, kernel_state()->emulator()->content_root(), true);
+        entry, kernel_state()->emulator()->content_root(), progress, true);
   }
 
   auto xam = kernel_state()->GetKernelModule<XamModule>("xam.xex");

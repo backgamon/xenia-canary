@@ -7,13 +7,9 @@
  ******************************************************************************
  */
 
-#include <algorithm>
-#include <vector>
-
-#include "xenia/base/logging.h"
-#include "xenia/vfs/devices/xcontent_container_device.h"
-#include "xenia/vfs/devices/xcontent_container_entry.h"
 #include "xenia/vfs/devices/xcontent_devices/svod_container_device.h"
+#include "xenia/base/logging.h"
+#include "xenia/vfs/devices/xcontent_devices/svod_container_entry.h"
 
 namespace xe {
 namespace vfs {
@@ -26,10 +22,15 @@ SvodContainerDevice::SvodContainerDevice(const std::string_view mount_path,
   SetName("FATX");
 }
 
-SvodContainerDevice::~SvodContainerDevice() { CloseFiles(); }
+SvodContainerDevice::~SvodContainerDevice() {
+  for (auto& file : files_) {
+    fclose(file.second);
+  }
+  files_.clear();
+  files_total_size_ = 0;
+}
 
-SvodContainerDevice::Result SvodContainerDevice::LoadHostFiles(
-    FILE* header_file) {
+SvodContainerDevice::Result SvodContainerDevice::LoadHostFiles() {
   std::filesystem::path data_fragment_path = host_path_;
   data_fragment_path += ".data";
   if (!std::filesystem::exists(data_fragment_path)) {
@@ -58,7 +59,7 @@ SvodContainerDevice::Result SvodContainerDevice::LoadHostFiles(
     auto file = xe::filesystem::OpenFile(path, "rb");
     if (!file) {
       XELOGI("Failed to map SVOD file {}.", path);
-      CloseFiles();
+      // CloseFiles();
       return Result::kReadError;
     }
 
@@ -100,7 +101,7 @@ XContentContainerDevice::Result SvodContainerDevice::Read() {
   const uint64_t root_creation_timestamp =
       decode_fat_timestamp(root_data.creation_date, root_data.creation_time);
 
-  auto root_entry = new XContentContainerEntry(this, nullptr, "", &files_);
+  auto root_entry = new SvodContainerEntry(this, nullptr, "", &files_);
   root_entry->attributes_ = kFileAttributeDirectory;
   root_entry->access_timestamp_ = root_creation_timestamp;
   root_entry->create_timestamp_ = root_creation_timestamp;
@@ -112,7 +113,7 @@ XContentContainerDevice::Result SvodContainerDevice::Read() {
 }
 
 SvodContainerDevice::Result SvodContainerDevice::ReadEntry(
-    uint32_t block, uint32_t ordinal, XContentContainerEntry* parent) {
+    uint32_t block, uint32_t ordinal, SvodContainerEntry* parent) {
   // For games with a large amount of files, the ordinal offset can overrun
   // the current block and potentially hit a hash block.
   size_t ordinal_offset = ordinal * 0x4;
@@ -126,7 +127,11 @@ SvodContainerDevice::Result SvodContainerDevice::ReadEntry(
 
   // Read directory entry
   auto& file = files_.at(entry_file);
-  xe::filesystem::Seek(file, entry_address, SEEK_SET);
+  if (!xe::filesystem::Seek(file, entry_address, SEEK_SET)) {
+    XELOGE("{} Failed: Cannot seek file {} with offset: {} ordinal: {}",
+           __func__, entry_file, entry_address, ordinal);
+    return Result::kReadError;
+  }
 
 #pragma pack(push, 1)
   struct {
@@ -141,7 +146,7 @@ SvodContainerDevice::Result SvodContainerDevice::ReadEntry(
 #pragma pack(pop)
 
   if (fread(&dir_entry, sizeof(dir_entry), 1, file) != 1) {
-    XELOGE("ReadEntrySVOD failed to read directory entry at 0x{X}",
+    XELOGE("ReadEntrySVOD failed to read directory entry at {:016X}",
            entry_address);
     return Result::kReadError;
   }
@@ -149,7 +154,7 @@ SvodContainerDevice::Result SvodContainerDevice::ReadEntry(
   auto name_buffer = std::make_unique<char[]>(dir_entry.name_length);
   if (fread(name_buffer.get(), 1, dir_entry.name_length, file) !=
       dir_entry.name_length) {
-    XELOGE("ReadEntrySVOD failed to read directory entry name at 0x{X}",
+    XELOGE("ReadEntrySVOD failed to read directory entry name at {:016X}",
            entry_address);
     return Result::kReadError;
   }
@@ -157,6 +162,12 @@ SvodContainerDevice::Result SvodContainerDevice::ReadEntry(
   // Filename is stored as Windows-1252, convert it to UTF-8.
   auto ansi_name = std::string(name_buffer.get(), dir_entry.name_length);
   auto name = xe::win1252_to_utf8(ansi_name);
+
+  // Fallback to normal name if for whatever reason conversion from 1252 code
+  // page failed.
+  if (name.empty()) {
+    name = ansi_name;
+  }
 
   // Read the left node
   if (dir_entry.node_l) {
@@ -174,7 +185,7 @@ SvodContainerDevice::Result SvodContainerDevice::ReadEntry(
   // NOTE: SVOD entries don't have timestamps for individual files, which can
   //       cause issues when decrypting games. Using the root entry's timestamp
   //       solves this issues.
-  auto entry = XContentContainerEntry::Create(this, parent, name, &files_);
+  auto entry = SvodContainerEntry::Create(this, parent, name, &files_);
   if (dir_entry.attributes & kFileAttributeDirectory) {
     // Entry is a directory
     entry->attributes_ = kFileAttributeDirectory | kFileAttributeReadOnly;
@@ -212,7 +223,7 @@ SvodContainerDevice::Result SvodContainerDevice::ReadEntry(
       size_t last_record = -1;
       size_t last_offset = -1;
       while (remaining_size) {
-        const size_t BLOCK_SIZE = 0x800;
+        constexpr size_t BLOCK_SIZE = 0x800;
 
         size_t offset, file_index;
         BlockToOffset(block_index, &offset, &file_index);
@@ -370,12 +381,12 @@ void SvodContainerDevice::BlockToOffset(size_t block, size_t* out_address,
   //    consisting of 0x14388 data blocks, 0xCB Level0 hash tables, and 0x1
   //    Level1 hash table.
 
-  const size_t BLOCK_SIZE = 0x800;
-  const size_t HASH_BLOCK_SIZE = 0x1000;
-  const size_t BLOCKS_PER_L0_HASH = 0x198;
-  const size_t HASHES_PER_L1_HASH = 0xA1C4;
-  const size_t BLOCKS_PER_FILE = 0x14388;
-  const size_t MAX_FILE_SIZE = 0xA290000;
+  constexpr size_t BLOCK_SIZE = 0x800;
+  constexpr size_t HASH_BLOCK_SIZE = 0x1000;
+  constexpr size_t BLOCKS_PER_L0_HASH = 0x198;
+  constexpr size_t HASHES_PER_L1_HASH = 0xA1C4;
+  constexpr size_t BLOCKS_PER_FILE = 0x14388;
+  constexpr size_t MAX_FILE_SIZE = 0xA290000;
   const size_t BLOCK_OFFSET =
       header_->content_metadata.volume_descriptor.svod.start_data_block();
 

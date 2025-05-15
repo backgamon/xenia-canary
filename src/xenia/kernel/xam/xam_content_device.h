@@ -17,7 +17,9 @@ namespace kernel {
 namespace xam {
 
 enum class DeviceType : uint32_t {
+  Invalid = 0,
   HDD = 1,
+  MU = 2,
   ODD = 4,
 };
 

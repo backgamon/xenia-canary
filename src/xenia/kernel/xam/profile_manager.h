@@ -17,6 +17,7 @@
 
 #include "third_party/fmt/include/fmt/format.h"
 #include "xenia/base/string.h"
+#include "xenia/kernel/title_id_utils.h"
 #include "xenia/kernel/xam/user_profile.h"
 #include "xenia/xbox.h"
 
@@ -29,37 +30,19 @@ class KernelState;
 namespace xe {
 namespace kernel {
 namespace xam {
+class UserTracker;
+}  // namespace xam
+}  // namespace kernel
+}  // namespace xe
 
-constexpr uint32_t kDashboardID = 0xFFFE07D1;
+namespace xe {
+namespace kernel {
+namespace xam {
+
 const static std::string kDashboardStringID =
     fmt::format("{:08X}", kDashboardID);
 
-enum class XTileType {
-  kAchievement,
-  kGameIcon,
-  kGamerTile,
-  kGamerTileSmall,
-  kLocalGamerTile,
-  kLocalGamerTileSmall,
-  kBkgnd,
-  kAwardedGamerTile,
-  kAwardedGamerTileSmall,
-  kGamerTileByImageId,
-  kPersonalGamerTile,
-  kPersonalGamerTileSmall,
-  kGamerTileByKey,
-  kAvatarGamerTile,
-  kAvatarGamerTileSmall,
-  kAvatarFullBody
-};
-
-// TODO: find filenames of other tile types that are stored in profile
-static const std::map<XTileType, std::string> kTileFileNames = {
-    {XTileType::kPersonalGamerTile, "tile_64.png"},
-    {XTileType::kPersonalGamerTileSmall, "tile_32.png"},
-    {XTileType::kAvatarGamerTile, "avtr_64.png"},
-    {XTileType::kAvatarGamerTileSmall, "avtr_32.png"},
-};
+constexpr std::string_view kDefaultMountFormat = "User_{:016X}";
 
 class ProfileManager {
  public:
@@ -75,13 +58,14 @@ class ProfileManager {
 
   // Loading Profile means load everything
   // Loading Account means load basic data
-  ProfileManager(KernelState* kernel_state);
+  ProfileManager(KernelState* kernel_state, UserTracker* user_tracker);
 
   ~ProfileManager();
 
   bool CreateProfile(const std::string gamertag, bool autologin,
                      bool default_xuid = false);
-  // bool CreateProfile(const X_XAMACCOUNTINFO* account_info);
+  bool CreateProfile(const X_XAMACCOUNTINFO* account_info, uint64_t xuid);
+
   bool DeleteProfile(const uint64_t xuid);
 
   void ModifyGamertag(const uint64_t xuid, std::string gamertag);
@@ -114,14 +98,16 @@ class ProfileManager {
   bool IsAnyProfileSignedIn() const { return !logged_profiles_.empty(); }
 
   std::filesystem::path GetProfileContentPath(
-      const uint64_t xuid, const uint32_t title_id = -1) const;
+      const uint64_t xuid, const uint32_t title_id = -1,
+      const XContentType content_type = XContentType::kInvalid) const;
 
   static bool IsGamertagValid(const std::string gamertag);
 
  private:
   void UpdateConfig(const uint64_t xuid, const uint8_t slot);
   bool CreateAccount(const uint64_t xuid, const std::string gamertag);
-  bool UpdateAccount(const uint64_t xuid, X_XAMACCOUNTINFO* account);
+  bool CreateAccount(const uint64_t xuid, const X_XAMACCOUNTINFO* account);
+  bool UpdateAccount(const uint64_t xuid, const X_XAMACCOUNTINFO* account);
 
   std::filesystem::path GetProfilePath(const uint64_t xuid) const;
   std::filesystem::path GetProfilePath(const std::string xuid) const;
@@ -142,6 +128,7 @@ class ProfileManager {
   std::map<uint8_t, std::unique_ptr<UserProfile>> logged_profiles_;
 
   KernelState* kernel_state_;
+  UserTracker* user_tracker_;
 };
 
 }  // namespace xam

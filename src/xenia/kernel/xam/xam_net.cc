@@ -57,13 +57,14 @@ typedef struct {
   uint8_t abOnline[20];          // Online identification
 } XNADDR;
 
-typedef struct {
+struct XNDNS {
   xe::be<int32_t> status;
   xe::be<uint32_t> cina;
   in_addr aina[8];
-} XNDNS;
+};
+static_assert_size(XNDNS, 0x28);
 
-typedef struct {
+struct XNQOSINFO {
   uint8_t flags;
   uint8_t reserved;
   xe::be<uint16_t> probes_xmit;
@@ -74,18 +75,20 @@ typedef struct {
   xe::be<uint16_t> rtt_med_in_msecs;
   xe::be<uint32_t> up_bits_per_sec;
   xe::be<uint32_t> down_bits_per_sec;
-} XNQOSINFO;
+};
+static_assert_size(XNQOSINFO, 0x18);
 
-typedef struct {
+struct XNQOS {
   xe::be<uint32_t> count;
   xe::be<uint32_t> count_pending;
   XNQOSINFO info[1];
-} XNQOS;
+};
 
 struct Xsockaddr_t {
   xe::be<uint16_t> sa_family;
   char sa_data[14];
 };
+static_assert_size(XNQOS, 0x20);
 
 struct X_WSADATA {
   xe::be<uint16_t> version;
@@ -96,6 +99,7 @@ struct X_WSADATA {
   xe::be<uint16_t> max_udpdg;
   xe::be<uint32_t> vendor_info_ptr;
 };
+static_assert_size(X_WSADATA, 0x190);
 
 struct XWSABUF {
   xe::be<uint32_t> len;
@@ -166,6 +170,7 @@ struct XNetStartupParams {
   uint8_t cfgQosSrvMaxSimultaneousResponses;
   uint8_t cfgQosPairWaitTimeInSeconds;
 };
+static_assert_size(XNetStartupParams, 0xD);
 
 XNetStartupParams xnet_startup_params = {0};
 
@@ -451,25 +456,25 @@ DECLARE_XAM_EXPORT1(NetDll_WSASetEvent, kNetworking, kImplemented);
 
 struct XnAddrStatus {
   // Address acquisition is not yet complete
-  static const uint32_t XNET_GET_XNADDR_PENDING = 0x00000000;
+  static constexpr uint32_t XNET_GET_XNADDR_PENDING = 0x00000000;
   // XNet is uninitialized or no debugger found
-  static const uint32_t XNET_GET_XNADDR_NONE = 0x00000001;
+  static constexpr uint32_t XNET_GET_XNADDR_NONE = 0x00000001;
   // Host has ethernet address (no IP address)
-  static const uint32_t XNET_GET_XNADDR_ETHERNET = 0x00000002;
+  static constexpr uint32_t XNET_GET_XNADDR_ETHERNET = 0x00000002;
   // Host has statically assigned IP address
-  static const uint32_t XNET_GET_XNADDR_STATIC = 0x00000004;
+  static constexpr uint32_t XNET_GET_XNADDR_STATIC = 0x00000004;
   // Host has DHCP assigned IP address
-  static const uint32_t XNET_GET_XNADDR_DHCP = 0x00000008;
+  static constexpr uint32_t XNET_GET_XNADDR_DHCP = 0x00000008;
   // Host has PPPoE assigned IP address
-  static const uint32_t XNET_GET_XNADDR_PPPOE = 0x00000010;
+  static constexpr uint32_t XNET_GET_XNADDR_PPPOE = 0x00000010;
   // Host has one or more gateways configured
-  static const uint32_t XNET_GET_XNADDR_GATEWAY = 0x00000020;
+  static constexpr uint32_t XNET_GET_XNADDR_GATEWAY = 0x00000020;
   // Host has one or more DNS servers configured
-  static const uint32_t XNET_GET_XNADDR_DNS = 0x00000040;
+  static constexpr uint32_t XNET_GET_XNADDR_DNS = 0x00000040;
   // Host is currently connected to online service
-  static const uint32_t XNET_GET_XNADDR_ONLINE = 0x00000080;
+  static constexpr uint32_t XNET_GET_XNADDR_ONLINE = 0x00000080;
   // Network configuration requires troubleshooting
-  static const uint32_t XNET_GET_XNADDR_TROUBLESHOOT = 0x00008000;
+  static constexpr uint32_t XNET_GET_XNADDR_TROUBLESHOOT = 0x00008000;
 };
 
 dword_result_t NetDll_XNetGetTitleXnAddr_entry(dword_t caller,
@@ -550,11 +555,11 @@ DECLARE_XAM_EXPORT1(NetDll_XNetSetSystemLinkPort, kNetworking, kStub);
 
 // https://github.com/ILOVEPIE/Cxbx-Reloaded/blob/master/src/CxbxKrnl/EmuXOnline.h#L39
 struct XEthernetStatus {
-  static const uint32_t XNET_ETHERNET_LINK_ACTIVE = 0x01;
-  static const uint32_t XNET_ETHERNET_LINK_100MBPS = 0x02;
-  static const uint32_t XNET_ETHERNET_LINK_10MBPS = 0x04;
-  static const uint32_t XNET_ETHERNET_LINK_FULL_DUPLEX = 0x08;
-  static const uint32_t XNET_ETHERNET_LINK_HALF_DUPLEX = 0x10;
+  static constexpr uint32_t XNET_ETHERNET_LINK_ACTIVE = 0x01;
+  static constexpr uint32_t XNET_ETHERNET_LINK_100MBPS = 0x02;
+  static constexpr uint32_t XNET_ETHERNET_LINK_10MBPS = 0x04;
+  static constexpr uint32_t XNET_ETHERNET_LINK_FULL_DUPLEX = 0x08;
+  static constexpr uint32_t XNET_ETHERNET_LINK_HALF_DUPLEX = 0x10;
 };
 
 dword_result_t NetDll_XNetGetEthernetLinkStatus_entry(dword_t caller) {

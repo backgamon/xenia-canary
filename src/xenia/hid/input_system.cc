@@ -16,6 +16,11 @@
 #include "xenia/hid/input_driver.h"
 #include "xenia/kernel/util/shim_utils.h"
 
+#include "xenia/hid/skylander/skylander_emulated.h"
+#ifdef XE_PLATFORM_WIN32
+#include "xenia/hid/skylander/skylander_hardware.h"
+#endif  // XE_PLATFORM_WIN32
+
 namespace xe {
 namespace hid {
 
@@ -28,7 +33,13 @@ DEFINE_double(
     right_stick_deadzone_percentage, 0.0,
     "Defines deadzone level for right stick. Allowed range [0.0-1.0].", "HID");
 
-InputSystem::InputSystem(xe::ui::Window* window) : window_(window) {}
+InputSystem::InputSystem(xe::ui::Window* window) : window_(window) {
+  skylander_portal_ = std::make_unique<SkylanderPortalEmulated>();
+
+#ifdef XE_PLATFORM_WIN32
+  skylander_portal_ = std::make_unique<SkylanderPortalLibusb>();
+#endif  // XE_PLATFORM_WIN32
+}
 
 InputSystem::~InputSystem() = default;
 
@@ -109,6 +120,9 @@ X_RESULT InputSystem::GetState(uint32_t user_index, uint32_t flags,
   SCOPE_profile_cpu_f("hid");
 
   std::vector<InputDriver*> filtered_drivers = FilterDrivers(flags);
+  if (filtered_drivers.empty()) {
+    return X_ERROR_DEVICE_NOT_CONNECTED;
+  }
 
   for (auto& driver : filtered_drivers) {
     X_RESULT result = driver->GetState(user_index, out_state);

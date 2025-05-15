@@ -13,6 +13,7 @@
 #include "xenia/base/logging.h"
 #include "xenia/base/string_util.h"
 #include "xenia/kernel/kernel_state.h"
+#include "xenia/kernel/title_id_utils.h"
 #include "xenia/kernel/user_module.h"
 #include "xenia/kernel/util/shim_utils.h"
 #include "xenia/kernel/xam/xam_module.h"
@@ -221,7 +222,7 @@ dword_result_t XGetAVPack_entry() {
 DECLARE_XAM_EXPORT1(XGetAVPack, kNone, kStub);
 
 uint32_t xeXGetGameRegion() {
-  static uint32_t const table[] = {
+  static uint32_t constexpr table[] = {
       0xFFFFu, 0x03FFu, 0x02FEu, 0x02FEu, 0x03FFu, 0x02FEu, 0x0201u, 0x03FFu,
       0x02FEu, 0x02FEu, 0x03FFu, 0x03FFu, 0x03FFu, 0x03FFu, 0x02FEu, 0x03FFu,
       0x00FFu, 0xFFFFu, 0x02FEu, 0x03FFu, 0x0102u, 0x03FFu, 0x03FFu, 0x02FEu,
@@ -281,7 +282,7 @@ dword_result_t XamGetCurrentTitleId_entry() {
 DECLARE_XAM_EXPORT1(XamGetCurrentTitleId, kNone, kImplemented);
 
 dword_result_t XamIsCurrentTitleDash_entry(const ppc_context_t& ctx) {
-  return ctx->kernel_state->title_id() == 0xFFFE07D1;
+  return ctx->kernel_state->title_id() == kDashboardID;
 }
 DECLARE_XAM_EXPORT1(XamIsCurrentTitleDash, kNone, kImplemented);
 
@@ -649,8 +650,18 @@ dword_result_t lstrlenW_entry(lpu16string_t string) {
 }
 DECLARE_XAM_EXPORT1(lstrlenW, kNone, kImplemented);
 
-dword_result_t XGetAudioFlags_entry() { return cvars::audio_flag; }
-DECLARE_XAM_EXPORT1(XGetAudioFlags, kNone, kStub);
+dword_result_t XGetAudioFlags_entry() {
+  if (cvars::avpack == 2) {
+    return 2;
+  }
+
+  if (!cvars::audio_flag) {
+    return 0x10000 | 0x1;
+  }
+
+  return cvars::audio_flag;
+}
+DECLARE_XAM_EXPORT1(XGetAudioFlags, kNone, kImplemented);
 
 /*
         todo: this table should instead be pointed to by a member of kernel
@@ -701,6 +712,47 @@ DECLARE_XAM_EXPORT1(RtlRandom, kNone, kImplemented);
 
 dword_result_t Refresh_entry() { return X_ERROR_SUCCESS; }
 DECLARE_XAM_EXPORT1(Refresh, kNone, kStub);
+
+dword_result_t XamIsSystemExperienceTitleId_entry(dword_t title_id) {
+  return IsSystemExperienceTitle(title_id);
+}
+DECLARE_XAM_EXPORT1(XamIsSystemExperienceTitleId, kNone, kImplemented);
+
+dword_result_t XamIsSystemTitleId_entry(dword_t title_id) {
+  return IsSystemTitle(title_id);
+}
+DECLARE_XAM_EXPORT1(XamIsSystemTitleId, kNone, kImplemented);
+
+dword_result_t XamIsXbox1TitleId_entry(dword_t title_id) {
+  return IsOriginalXboxTitle(title_id);
+}
+DECLARE_XAM_EXPORT1(XamIsXbox1TitleId, kNone, kImplemented);
+
+void XamSetActiveDashAppInfo_entry(pointer_t<X_DASH_APP_INFO> dash_app) {
+  if (!dash_app) {
+    kernel_state()->dash_app_info_ = {};
+    return;
+  }
+  std::memcpy(&kernel_state()->dash_app_info_, dash_app,
+              sizeof(X_DASH_APP_INFO));
+}
+DECLARE_XAM_EXPORT1(XamSetActiveDashAppInfo, kNone, kImplemented);
+
+void XamGetActiveDashAppInfo_entry(pointer_t<X_DASH_APP_INFO> dash_app) {
+  if (!dash_app) {
+    return;
+  }
+  std::memcpy(dash_app, &kernel_state()->dash_app_info_,
+              sizeof(X_DASH_APP_INFO));
+}
+DECLARE_XAM_EXPORT1(XamGetActiveDashAppInfo, kNone, kImplemented);
+
+void XampWebInstrumentationSetProfileCounts_entry(dword_t live_profiles,
+                                                  dword_t local_profiles,
+                                                  dword_t adult_profiles,
+                                                  dword_t child_profiles) {}
+DECLARE_XAM_EXPORT1(XampWebInstrumentationSetProfileCounts, kUserProfiles,
+                    kStub);
 
 }  // namespace xam
 }  // namespace kernel
